@@ -1,0 +1,74 @@
+{
+  "generado_utc": "2026-11-21T01:53:45.037548+00:00",
+  "modelo": "LightGBM",
+  "variante": "A0 (17 features)",
+  "formato": "lightgbm-txt",
+  "target": "residuo = Valor - ALLSKY; prediccion = ALLSKY + residuo; clip>=0",
+  "features": [
+    "ALLSKY_SFC_SW_DWN",
+    "CLRSKY_SFC_SW_DWN",
+    "ALLSKY_KT",
+    "T2M",
+    "Latitud",
+    "Longitud",
+    "Altitud",
+    "zenit",
+    "azimut",
+    "g0_horiz",
+    "razon_cielo",
+    "kt_calc",
+    "hora_sin",
+    "hora_cos",
+    "dia_sin",
+    "dia_cos",
+    "Mes"
+  ],
+  "hiperparametros": {
+    "n_estimators": 400,
+    "learning_rate": 0.0235,
+    "num_leaves": 113,
+    "min_child_samples": 233,
+    "subsample": 0.794,
+    "colsample_bytree": 0.501,
+    "reg_lambda": 3.0,
+    "random_state": 42,
+    "n_jobs": -1,
+    "verbose": -1
+  },
+  "decisiones": {
+    "preliminares": "excluidos (A/B: +5.5% MAE mensual)",
+    "split": "1b estratificado por altitud, test temporal >=2021, holdout espacial 20%",
+    "seleccion_familia": "LightGBM (empate con XGBoost/RF, elegido por velocidad)",
+    "ablacion": "A0 gana: lat/lon aportan +3% mensual en estaciones nuevas"
+  },
+  "train": {
+    "filas": 2052415,
+    "estaciones": 88
+  },
+  "importancia_features": {
+    "ALLSKY_SFC_SW_DWN": 0.0289,
+    "CLRSKY_SFC_SW_DWN": 0.0416,
+    "ALLSKY_KT": 0.0434,
+    "T2M": 0.0792,
+    "Latitud": 0.1426,
+    "Longitud": 0.1201,
+    "Altitud": 0.1429,
+    "zenit": 0.0383,
+    "azimut": 0.0718,
+    "g0_horiz": 0.0343,
+    "razon_cielo": 0.0509,
+    "kt_calc": 0.0386,
+    "hora_sin": 0.0235,
+    "hora_cos": 0.0103,
+    "dia_sin": 0.0458,
+    "dia_cos": 0.0597,
+    "Mes": 0.0283
+  },
+  "versiones": {
+    "python": "3.11.18",
+    "lightgbm": "4.7.0",
+    "sklearn": "1.9.1",
+    "numpy": "2.4.6"
+  },
+  "seed": 42
+}
