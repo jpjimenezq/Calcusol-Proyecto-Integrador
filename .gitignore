@@ -6,3 +6,10 @@ aws*
 data/
 .venv/
 venv/
+# R5
+datos/
+__pycache__/
+*.pyc
+*.zip
+hs_err_pid*.log
+scripts/

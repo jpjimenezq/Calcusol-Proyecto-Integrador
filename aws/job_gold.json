@@ -1,0 +1,20 @@
+{
+  "Name": "calcusol-gold",
+  "Description": "R5: silver -> gold (gold/integracion.py reglas 11-13, 12b, Sitio + gold/features.py G1-G3, D1)",
+  "Role": "calcusol-glue-role",
+  "Command": {
+    "Name": "glueetl",
+    "ScriptLocation": "s3://calcusol-datos-eafit/scripts/glue/glue_gold.py",
+    "PythonVersion": "3"
+  },
+  "GlueVersion": "5.0",
+  "WorkerType": "G.1X",
+  "NumberOfWorkers": 2,
+  "Timeout": 60,
+  "MaxRetries": 0,
+  "DefaultArguments": {
+    "--extra-py-files": "s3://calcusol-datos-eafit/scripts/calcusol.zip",
+    "--data-root": "s3://calcusol-datos-eafit",
+    "--enable-continuous-cloudwatch-log": "true"
+  }
+}

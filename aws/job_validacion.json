@@ -1,0 +1,20 @@
+{
+  "Name": "calcusol-validacion",
+  "Description": "R5: contrato completo de gold v1; si no cumple, el job falla",
+  "Role": "calcusol-glue-role",
+  "Command": {
+    "Name": "glueetl",
+    "ScriptLocation": "s3://calcusol-datos-eafit/scripts/glue/glue_validacion.py",
+    "PythonVersion": "3"
+  },
+  "GlueVersion": "5.0",
+  "WorkerType": "G.1X",
+  "NumberOfWorkers": 2,
+  "Timeout": 60,
+  "MaxRetries": 0,
+  "DefaultArguments": {
+    "--extra-py-files": "s3://calcusol-datos-eafit/scripts/calcusol.zip",
+    "--data-root": "s3://calcusol-datos-eafit",
+    "--enable-continuous-cloudwatch-log": "true"
+  }
+}
