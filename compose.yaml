@@ -1,0 +1,20 @@
+services:
+  calcusol:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: calcusol
+
+    working_dir: /app
+
+    environment:
+      # El paquete vive en src/; así `python -m calcusol...` lo encuentra
+      # sin reconstruir la imagen en cada cambio de código.
+      PYTHONPATH: /app/src
+
+    volumes:
+      - .:/app
+
+    stdin_open: true
+    tty: true
