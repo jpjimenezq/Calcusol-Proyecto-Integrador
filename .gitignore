@@ -1,0 +1,8 @@
+*.env
+credentials*
+aws*
+*.pem
+*.key
+data/
+.venv/
+venv/
