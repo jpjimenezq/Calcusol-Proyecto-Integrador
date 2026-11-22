@@ -1,0 +1,166 @@
+# =====================================================================
+# Calcusol · R3 · Ficha de supuestos (UN solo archivo, nunca en el código)
+# ---------------------------------------------------------------------
+# Cada dato lleva: valor, fuente (con enlace) y estado.
+#   OK         -> fuente oficial o del fabricante, verificada
+#   PUBLICADO  -> precios publicados por instaladores (plan B: sin cotizaciones)
+#   DECISION   -> elección del equipo, explicada (no es un dato del mundo)
+#   PENDIENTE  -> no se encontró fuente; NO se usa hasta tenerla
+# Fecha de consulta de todas las fuentes: 2026-11-19
+# =====================================================================
+
+datos:
+  # ---- VERSIÓN FINAL (21-nov-2026) ----
+  tabla_gold: datos/gold_v1_unico.parquet           # gold v1 de Felipe (R5): 123 estaciones, 2005-2022
+  modelo: datos/modelo_lgbm.joblib                  # modelo final de R1: LightGBM, 17 variables
+  # El LightGBM predice la DIFERENCIA con la NASA (IDEAM - NASA): Prediccion = NASA + modelo
+  modelo_predice: diferencia_con_nasa               # o: radiacion (modelos que predicen el valor directo)
+  # R1 calculó zenit, azimut y g0_horiz con la hora Fecha + 30 min (verificado contra su Excel)
+  desfase_variables_sol_min: 30
+  anios_prueba: []                                  # vacío = todos los años de cada estación
+  # Excel FINAL de evaluación de R2 (Manuela): validación cruzada en 112 sitios.
+  #  - hoja mejora_por_sitio: columna caso_sugerido (3 casos: mayor, mediana y menor mejora)
+  #  - hoja serie_horaria: IDEAM, NASA y modelo hora por hora en el año con más datos de cada caso.
+  #    El modelo viene de un pliegue que NO vio ese sitio: es el resultado honesto para un lugar nuevo.
+  casos_r2: datos/evaluacion_lightgbm_final.xlsx
+  columna_mejora: mejora_para_regla_D16             # mejora del error MENSUAL (cifra de negocio de R2)
+  columna_modelo_r2: Modelo_principal               # LightGBM con ubicación
+  # (Versión anterior: predicciones ya hechas por R2. Vacío = se usa el modelo de arriba.)
+  predicciones_r2:
+  modelo_r2: XGBoost (completo)
+  tabla_mejora_r2:
+  columnas_r2:
+    estacion: CodigoEstacion
+    mejora_pct: Mejora_pct
+  carpeta_resultados: resultados
+  # Para calcular un punto cualquiera (sin estación): años que se descargan de NASA
+  anios_nasa_punto: [2023, 2024, 2025]
+  # Ajuste de horas para que la descarga coincida con la limpieza del equipo.
+  # Se averigua con calibrar_desfase_nasa (notebook, Paso 11). 0 = sin ajuste extra.
+  desfase_nasa_horas: 0
+
+# ---------------- Panel y sistema (D12, D13) ----------------
+sistema:
+  kWp:
+    valor: 1.5
+    fuente: "Decisión: tamaño que produce ~ lo que consume la casa en un año (157 kWh/mes x 12 = 1,884 kWh)"
+    estado: DECISION
+  inclinacion_grados: {valor: 10, fuente: "Decisión del equipo D13", estado: DECISION}
+  azimut_grados: {valor: 180, fuente: "Decisión del equipo D13 (mirando al sur)", estado: DECISION}
+  albedo:
+    valor: 0.2
+    fuente: "NREL, PVWatts Version 5 Manual (Dobos, 2014): albedo fijo en 0.2 por defecto"
+    estado: OK
+  perdidas_sistema:
+    valor: 0.14
+    fuente: "NREL, PVWatts Version 5 Manual (Dobos, 2014): pérdidas totales del sistema 14 % por defecto. https://www.nrel.gov/docs/fy14osti/62641.pdf"
+    estado: OK
+  eficiencia_inversor:
+    valor: 0.96
+    fuente: "NREL PVWatts API v8: eficiencia nominal del inversor 96 % por defecto. https://developer.nrel.gov/docs/solar/pvwatts/v8"
+    estado: OK
+  noct_c:
+    valor: 45
+    fuente: "Ficha técnica Jinko Tiger Neo JKM425-445N-54HL4R-B: NOCT 45 ± 2 °C"
+    estado: OK
+  coef_temp_potencia_por_c:
+    valor: -0.0029
+    fuente: "Ficha técnica Jinko Tiger Neo JKM425-445N-54HL4R-B: coeficiente de temperatura de Pmax -0.29 %/°C"
+    estado: OK
+  degradacion_primer_anio:
+    valor: 0.01
+    fuente: "Ficha técnica Jinko Tiger Neo 54HL4R-B: degradación primer año 1 %"
+    estado: OK
+  degradacion_anual:
+    valor: 0.004
+    fuente: "Ficha técnica Jinko Tiger Neo 54HL4R-B: 0.40 % anual durante 30 años"
+    estado: OK
+  ajuste_minutos_hora: {valor: -30, fuente: "Decisión D0: el IDEAM marca el final de la hora", estado: DECISION}
+  zona_horaria: {valor: "America/Bogota", fuente: "Decisión D13: hora de Colombia", estado: DECISION}
+
+# ---------------- Consumo del hogar (D15) ----------------
+consumo:
+  estrato: 3
+  kwh_mes_hogar:
+    valor: 157
+    fuente: "UPME: consumo promedio de un hogar colombiano 157 kWh/mes (citado en La República, 2022). Reemplazar por el dato SUI por estrato cuando el equipo lo tenga"
+    estado: OK
+  consumo_subsistencia_kwh_mes:
+    valor: {bajo_1000m: 173, desde_1000m: 130}
+    fuente: "UPME: 173 kWh/mes bajo 1,000 m.s.n.m. y 130 kWh/mes desde 1,000 m.s.n.m. (Revista Entre Ciencia e Ingeniería, UCP, 2023)"
+    estado: OK
+  forma_dia_laboral:
+    valor: [3,2,2,2,2,4,7,6,4,3,3,3,4,3,3,3,4,6,9,10,9,7,5,4]
+    fuente: "PENDIENTE: debe salir de DS4 (potencia y horas de uso). Hoy es una forma de ejemplo"
+    estado: PENDIENTE
+  forma_fin_de_semana:
+    valor: [3,3,2,2,2,2,3,5,6,6,6,6,6,5,5,5,5,6,8,9,9,8,6,4]
+    fuente: "PENDIENTE: debe salir de DS4 (potencia y horas de uso). Hoy es una forma de ejemplo"
+    estado: PENDIENTE
+
+# ---------------- Finanzas (D14) ----------------
+finanzas:
+  costo_por_kWp_cop:
+    valor: 5000000
+    fuente: "Precios publicados por instaladores en 2026 para sistemas pequeños conectados a red: 3 kWp entre $12 y $16 millones (solartech.com.co); 3 kWp entre $4.0 y $4.7 millones por kWp (matrixenergysystems.com); $5.8 a $8.5 millones por kWp (evalgroup.com.co); $3.5 a $5 millones por kWp (opscolombia.com). Medio 5.0 M; bajo 3.5 M; alto 7.0 M"
+    estado: PUBLICADO
+  mantenimiento_anual_pct_capex:
+    valor: 0.012
+    fuente: "NREL Annual Technology Baseline 2020: costo de operación y mantenimiento = 1.2 % del costo de inversión por año. https://atb-archive.nrel.gov/electricity/2020/index.php?t=su&s=om"
+    estado: OK
+  anio_reemplazo_inversor:
+    valor: 15
+    fuente: "NREL Annual Technology Baseline: vida media del inversor 15 años (citado por Reuters Events)"
+    estado: OK
+  costo_reemplazo_inversor_cop:
+    valor: 1333750
+    fuente: "Precio publicado inversor de red Sofar KTLM-G3 de 3 kW: $1,333,750 (gee-renovables.com, precios al 14-oct-2026)"
+    estado: PUBLICADO
+  tarifas_epm_cop_kwh:
+    valor:
+      1: {subsistencia: 427.04, plena: 991.29}
+      2: {subsistencia: 533.81, plena: 991.29}
+      3: {subsistencia: 842.59, plena: 991.29}
+      4: {subsistencia: 991.29, plena: 991.29}
+      5: {subsistencia: 1189.54, plena: 1189.54}
+      6: {subsistencia: 1189.54, plena: 1189.54}
+    fuente: "EPM, publicación oficial de tarifas octubre 2026, residencial nivel I, propiedad EPM. https://www.epm.com.co/content/dam/epm/clientes-y-usuarios/energia/tarifas-energia/Tarifas%202026/10.PublicacionTarifasOctubre162026_ANT_OM.pdf"
+    estado: OK
+  cargo_comercializacion_cop_kwh:
+    valor: 114.28
+    fuente: "EPM octubre 2026, margen de comercialización (Cv). Por CREG 174/2021 el comercializador cobra este componente por cada kWh de excedente compensado (Concepto CREG 3023 de 2026)"
+    estado: OK
+  precio_excedente_tramo2_cop:
+    valor: 331
+    fuente: "Excedentes por encima de lo importado se pagan a precio de bolsa (CREG 174/2021); la CREG 101 072/2025 lo pasará al índice MC (Concepto CREG 3023 de 2026). Se usa el MC de agosto 2026 = $331/kWh (XM, citado por Portafolio). Bolsa 2026 varió entre ~$130 y ~$950/kWh: escenarios"
+    estado: OK
+  tasa_descuento:
+    valor: 0.09
+    fuente: "DNP, Resolución 1092 de 2022: tasa social de descuento 9 % efectiva anual"
+    estado: OK
+  incremento_real_tarifa_anual:
+    valor: 0.0
+    fuente: "Decisión: la tarifa se mantiene constante (supuesto conservador); se prueba en la sensibilidad"
+    estado: DECISION
+  horizonte_anios:
+    valor: 25
+    fuente: "Ficha técnica Jinko Tiger Neo 54HL4R-B: garantía de producto 25 años"
+    estado: OK
+  factor_emision_kgco2_kwh:
+    valor: 0.660
+    fuente: "UPME, Factores de emisión del SIN 2024, margen combinado para proyectos solares. https://docs.upme.gov.co/Normatividad/Soporte_calculo_Factor_de_Emision_2024.pdf"
+    estado: OK
+
+# ---------------- Casos (D16) ----------------
+casos:
+  caso_narrativo: "VILLETA"
+  min_horas_por_mes: 150
+
+# ---------------- Sensibilidad (R3-5) ----------------
+# Se mueve UN parámetro a la vez, con valores bajo y alto que salen de las fuentes
+sensibilidad:
+  costo_por_kWp_cop: [3500000, 7000000]
+  tarifa_factor: [0.8, 1.2]
+  precio_excedente_tramo2_cop: [130, 950]
+  tasa_descuento: [0.064, 0.12]
+  kWp: [1.0, 2.0]

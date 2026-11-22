@@ -1,0 +1,28 @@
+Grupo,Parametro,Valor,Fuente,Estado
+sistema,kWp,1.5,"Decisión: tamaño que produce ~ lo que consume la casa en un año (157 kWh/mes x 12 = 1,884 kWh)",DECISION
+sistema,inclinacion_grados,10,Decisión del equipo D13,DECISION
+sistema,azimut_grados,180,Decisión del equipo D13 (mirando al sur),DECISION
+sistema,albedo,0.2,"NREL, PVWatts Version 5 Manual (Dobos, 2014): albedo fijo en 0.2 por defecto",OK
+sistema,perdidas_sistema,0.14,"NREL, PVWatts Version 5 Manual (Dobos, 2014): pérdidas totales del sistema 14 % por defecto. https://www.nrel.gov/docs/fy14osti/62641.pdf",OK
+sistema,eficiencia_inversor,0.96,NREL PVWatts API v8: eficiencia nominal del inversor 96 % por defecto. https://developer.nrel.gov/docs/solar/pvwatts/v8,OK
+sistema,noct_c,45,Ficha técnica Jinko Tiger Neo JKM425-445N-54HL4R-B: NOCT 45 ± 2 °C,OK
+sistema,coef_temp_potencia_por_c,-0.0029,Ficha técnica Jinko Tiger Neo JKM425-445N-54HL4R-B: coeficiente de temperatura de Pmax -0.29 %/°C,OK
+sistema,degradacion_primer_anio,0.01,Ficha técnica Jinko Tiger Neo 54HL4R-B: degradación primer año 1 %,OK
+sistema,degradacion_anual,0.004,Ficha técnica Jinko Tiger Neo 54HL4R-B: 0.40 % anual durante 30 años,OK
+sistema,ajuste_minutos_hora,-30,Decisión D0: el IDEAM marca el final de la hora,DECISION
+sistema,zona_horaria,America/Bogota,Decisión D13: hora de Colombia,DECISION
+consumo,kwh_mes_hogar,157,"UPME: consumo promedio de un hogar colombiano 157 kWh/mes (citado en La República, 2022). Reemplazar por el dato SUI por estrato cuando el equipo lo tenga",OK
+consumo,consumo_subsistencia_kwh_mes,"{'bajo_1000m': 173, 'desde_1000m': 130}","UPME: 173 kWh/mes bajo 1,000 m.s.n.m. y 130 kWh/mes desde 1,000 m.s.n.m. (Revista Entre Ciencia e Ingeniería, UCP, 2023)",OK
+consumo,forma_dia_laboral,"[3, 2, 2, 2, 2, 4, 7, 6, 4, 3, 3, 3, 4, 3, 3, 3, 4, 6, 9, 10, 9, 7, 5, 4]",PENDIENTE: debe salir de DS4 (potencia y horas de uso). Hoy es una forma de ejemplo,PENDIENTE
+consumo,forma_fin_de_semana,"[3, 3, 2, 2, 2, 2, 3, 5, 6, 6, 6, 6, 6, 5, 5, 5, 5, 6, 8, 9, 9, 8, 6, 4]",PENDIENTE: debe salir de DS4 (potencia y horas de uso). Hoy es una forma de ejemplo,PENDIENTE
+finanzas,costo_por_kWp_cop,5000000,Precios publicados por instaladores en 2026 para sistemas pequeños conectados a red: 3 kWp entre $12 y $16 millones (solartech.com.co); 3 kWp entre $4.0 y $4.7 millones por kWp (matrixenergysystems.com); $5.8 a $8.5 millones por kWp (evalgroup.com.co); $3.5 a $5 millones por kWp (opscolombia.com). Medio 5.0 M; bajo 3.5 M; alto 7.0 M,PUBLICADO
+finanzas,mantenimiento_anual_pct_capex,0.012,NREL Annual Technology Baseline 2020: costo de operación y mantenimiento = 1.2 % del costo de inversión por año. https://atb-archive.nrel.gov/electricity/2020/index.php?t=su&s=om,OK
+finanzas,anio_reemplazo_inversor,15,NREL Annual Technology Baseline: vida media del inversor 15 años (citado por Reuters Events),OK
+finanzas,costo_reemplazo_inversor_cop,1333750,"Precio publicado inversor de red Sofar KTLM-G3 de 3 kW: $1,333,750 (gee-renovables.com, precios al 14-oct-2026)",PUBLICADO
+finanzas,tarifas_epm_cop_kwh,"{1: {'subsistencia': 427.04, 'plena': 991.29}, 2: {'subsistencia': 533.81, 'plena': 991.29}, 3: {'subsistencia': 842.59, 'plena': 991.29}, 4: {'subsistencia': 991.29, 'plena': 991.29}, 5: {'subsistencia': 1189.54, 'plena': 1189.54}, 6: {'subsistencia': 1189.54, 'plena': 1189.54}}","EPM, publicación oficial de tarifas octubre 2026, residencial nivel I, propiedad EPM. https://www.epm.com.co/content/dam/epm/clientes-y-usuarios/energia/tarifas-energia/Tarifas%202026/10.PublicacionTarifasOctubre162026_ANT_OM.pdf",OK
+finanzas,cargo_comercializacion_cop_kwh,114.28,"EPM octubre 2026, margen de comercialización (Cv). Por CREG 174/2021 el comercializador cobra este componente por cada kWh de excedente compensado (Concepto CREG 3023 de 2026)",OK
+finanzas,precio_excedente_tramo2_cop,331,"Excedentes por encima de lo importado se pagan a precio de bolsa (CREG 174/2021); la CREG 101 072/2025 lo pasará al índice MC (Concepto CREG 3023 de 2026). Se usa el MC de agosto 2026 = $331/kWh (XM, citado por Portafolio). Bolsa 2026 varió entre ~$130 y ~$950/kWh: escenarios",OK
+finanzas,tasa_descuento,0.09,"DNP, Resolución 1092 de 2022: tasa social de descuento 9 % efectiva anual",OK
+finanzas,incremento_real_tarifa_anual,0.0,Decisión: la tarifa se mantiene constante (supuesto conservador); se prueba en la sensibilidad,DECISION
+finanzas,horizonte_anios,25,Ficha técnica Jinko Tiger Neo 54HL4R-B: garantía de producto 25 años,OK
+finanzas,factor_emision_kgco2_kwh,0.66,"UPME, Factores de emisión del SIN 2024, margen combinado para proyectos solares. https://docs.upme.gov.co/Normatividad/Soporte_calculo_Factor_de_Emision_2024.pdf",OK
