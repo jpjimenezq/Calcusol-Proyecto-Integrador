@@ -58,8 +58,11 @@ Prueba rápida con dos departamentos: `& $py -m calcusol.pipeline Amazonas Calda
 | calcusol-validacion | gold/validacion (si gold no cumple el contrato, el job falla) |
 
 El paquete se sube comprimido (`calcusol.zip`, con la carpeta `calcusol` en la raíz) a
-`s3://calcusol-datos-eafit/scripts/`, y las entradas a `s3://calcusol-datos-eafit/scripts/glue/`.
+`s3://calcusol-datos-eafit/scripts/`. Los scripts de entrada (`glue/glue_*.py`) se cargaron con
+*Upload script* al crear cada job, así que Glue los guarda en
+`s3://aws-glue-assets-607581913067-us-east-1/scripts/<nombre del job>.py`.
 Cada job recibe `--extra-py-files s3://calcusol-datos-eafit/scripts/calcusol.zip` y `--data-root s3://calcusol-datos-eafit`.
+`calcusol-silver` corre con 5 workers G.1X; `calcusol-gold` y `calcusol-validacion`, con 2.
 
 ## Auditoría
 
