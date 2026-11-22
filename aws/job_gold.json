@@ -4,7 +4,7 @@
   "Role": "calcusol-glue-role",
   "Command": {
     "Name": "glueetl",
-    "ScriptLocation": "s3://calcusol-datos-eafit/scripts/glue/glue_gold.py",
+    "ScriptLocation": "s3://aws-glue-assets-607581913067-us-east-1/scripts/calcusol-gold.py",
     "PythonVersion": "3"
   },
   "GlueVersion": "5.0",
