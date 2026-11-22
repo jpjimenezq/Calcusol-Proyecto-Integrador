@@ -4,12 +4,12 @@
   "Role": "calcusol-glue-role",
   "Command": {
     "Name": "glueetl",
-    "ScriptLocation": "s3://calcusol-datos-eafit/scripts/glue/glue_silver.py",
+    "ScriptLocation": "s3://aws-glue-assets-607581913067-us-east-1/scripts/calcusol-silver.py",
     "PythonVersion": "3"
   },
   "GlueVersion": "5.0",
   "WorkerType": "G.1X",
-  "NumberOfWorkers": 2,
+  "NumberOfWorkers": 5,
   "Timeout": 60,
   "MaxRetries": 0,
   "DefaultArguments": {
