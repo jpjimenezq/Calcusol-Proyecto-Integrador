@@ -19,7 +19,9 @@
       "Action": ["s3:PutObject", "s3:DeleteObject"],
       "Resource": [
         "arn:aws:s3:::calcusol-datos-eafit/silver/*",
-        "arn:aws:s3:::calcusol-datos-eafit/gold/*"
+        "arn:aws:s3:::calcusol-datos-eafit/gold/*",
+        "arn:aws:s3:::calcusol-datos-eafit/silver_*",
+        "arn:aws:s3:::calcusol-datos-eafit/gold_*"
       ]
     }
   ]
