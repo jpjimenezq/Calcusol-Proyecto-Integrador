@@ -326,17 +326,37 @@
     // Vista: zoom y centro (lon, lat) se conservan entre redibujados
     const v = vistas.get(el) || { z: 1, lon: lonC, lat: latC, arrastre: 0 };
     vistas.set(el, v);
+    // Enfoque pedido por la aplicación (por ejemplo, al elegir un departamento): se aplica una sola vez por
+    // cambio, así el usuario puede seguir moviendo el mapa. null vuelve a mostrar todo el mapa.
+    if (o.enfoque !== undefined && v.enfoque !== (o.enfoque ? o.enfoque.clave : null)) {
+      v.enfoque = o.enfoque ? o.enfoque.clave : null;
+      if (o.enfoque) {
+        const e = o.enfoque, ew = Math.max((e.lon1 - e.lon0) * k * esc, 1), eh = Math.max((e.lat1 - e.lat0) * esc, 1);
+        v.z = Math.min(ZOOM_MAX, Math.max(1, 0.8 * Math.min(g.w / ew, mh / eh)));
+        v.lon = (e.lon0 + e.lon1) / 2; v.lat = (e.lat0 + e.lat1) / 2;
+      } else { v.z = 1; v.lon = lonC; v.lat = latC; }
+    }
     const X = (lon) => cx + (lon - v.lon) * k * esc * v.z, Y = (lat) => cy + (v.lat - lat) * esc * v.z;
     const lonDe = (x) => v.lon + (x - cx) / (k * esc * v.z), latDe = (y) => v.lat - (y - cy) / (esc * v.z);
     const acotar = (c, a, b, semi) => (b - a <= 2 * semi ? (a + b) / 2 : Math.min(b - semi, Math.max(a + semi, c)));
 
     const vals = o.puntos.map((p) => p.valor), vmin = Math.min(...vals), vmax = Math.max(...vals);
     const sel = o.puntos.find((p) => p.sel);
-    const munis = o.municipios || [];
+    // Estaciones insulares (San Andrés): quedan al oeste del continente y se dibujan en su recuadro, no en el mapa
+    const insular = (p) => p.lon < lon0 - 0.3;
+    const pMapa = o.puntos.filter((p) => !insular(p)), ptsIsla = o.puntos.filter(insular);
+    const munis = o.municipios || [], deptos = o.departamentos || [];
+    // Caja de cada municipio (se calcula una vez): al pasar el cursor evita probar los 1.100 contornos
+    munis.forEach((m) => {
+      if (m.b) return;
+      const xs = m.p.map((q) => q[0]), ys = m.p.map((q) => q[1]);
+      m.b = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+    });
+    const denso = munis.length > 300;      // país entero: líneas más tenues y menos rótulos
 
     // Imagen de calor: resolución fija en la proyección base
     const rw = 360, rh = Math.round(rw * mh / mw);
-    const pr = o.puntos.map((p) => ({ valor: p.valor, bx: X0(p.lon), by: Y0(p.lat), rx: (X0(p.lon) - X0(lon0)) * rw / mw, ry: (Y0(p.lat) - Y0(lat1)) * rh / mh }));
+    const pr = pMapa.map((p) => ({ valor: p.valor, bx: X0(p.lon), by: Y0(p.lat), rx: (X0(p.lon) - X0(lon0)) * rw / mw, ry: (Y0(p.lat) - Y0(lat1)) * rh / mh }));
     const campo = (bx, by) => {           // valor interpolado en coordenadas base, para el cuadro emergente
       let num = 0, den = 0;
       for (const p of pr) {
@@ -362,13 +382,14 @@
     const dentro = s('g', { 'clip-path': `url(#${id}-clip)` }, geo);
     const fijo = { 'vector-effect': 'non-scaling-stroke', 'pointer-events': 'none', 'stroke-linejoin': 'round' };
     s('image', { href: rasterCalor(pr, rw, rh, vmin, vmax), x: X0(lon0), y: Y0(lat1), width: mw, height: mh, preserveAspectRatio: 'none', 'pointer-events': 'none' }, dentro);
-    s('path', { ...fijo, d: munis.map((m) => ruta(m.p)).join(''), fill: 'none', stroke: C.marino, 'stroke-width': 0.7, 'stroke-opacity': 0.28 }, dentro);
+    s('path', { ...fijo, d: munis.map((m) => ruta(m.p)).join(''), fill: 'none', stroke: C.marino, 'stroke-width': denso ? 0.5 : 0.7, 'stroke-opacity': denso ? 0.16 : 0.28 }, dentro);
+    if (deptos.length) s('path', { ...fijo, d: deptos.map((d) => ruta(d.p)).join(''), fill: 'none', stroke: C.marino, 'stroke-width': 1.1, 'stroke-opacity': 0.6 }, dentro);
 
-    if (sel) {
+    if (sel && !insular(sel)) {
       // Zona de la estación: el rectángulo del mapa recortado con la mediatriz frente a cada otra estación
       const a = { x: X0(sel.lon), y: Y0(sel.lat) };
       let pol = [[X0(lon0) - 5, Y0(lat1) - 5], [X0(lon1) + 5, Y0(lat1) - 5], [X0(lon1) + 5, Y0(lat0) + 5], [X0(lon0) - 5, Y0(lat0) + 5]];
-      for (const p of o.puntos) {
+      for (const p of pMapa) {
         if (p === sel || !pol.length) continue;
         const b = { x: X0(p.lon), y: Y0(p.lat) }, nx = b.x - a.x, ny = b.y - a.y, c = nx * (a.x + b.x) / 2 + ny * (a.y + b.y) / 2;
         const lado = (q) => nx * q[0] + ny * q[1] - c, out = [];
@@ -402,12 +423,63 @@
     };
     area.addEventListener('pointermove', (ev) => {
       if (arrastrando) return;
-      const q = aMapa(ev), m = munis.find((mu) => enPoligono(q.lon, q.lat, mu.p));
-      const t = o.tip(q.lon, q.lat, campo(X0(q.lon), Y0(q.lat)), m ? m.n : null);
+      const q = aMapa(ev), m = munis.find((mu) => q.lon >= mu.b[0] && q.lon <= mu.b[2] && q.lat >= mu.b[1] && q.lat <= mu.b[3] && enPoligono(q.lon, q.lat, mu.p));
+      const t = o.tip(q.lon, q.lat, campo(X0(q.lon), Y0(q.lat)), m ? (m.d !== undefined && deptos[m.d] ? `${m.n} · ${deptos[m.d].n}` : m.n) : null);
       mostrarTip(ev, t.titulo, t.filas);
     });
     area.addEventListener('pointerleave', ocultarTip);
     area.addEventListener('click', (ev) => { if (Date.now() - v.arrastre < 350) return; const q = aMapa(ev); o.onPunto(q.lon, q.lat); });
+
+    /* ----- Islas (San Andrés y Providencia): recuadros ampliados abajo a la izquierda, fuera del zoom -----
+     * Están a ~700 km del continente y miden pocos kilómetros: en el mapa del país no se verían. Cada isla se
+     * dibuja a su propia escala, con el color de la radiación de su estación, y se puede tocar como el resto. */
+    function dibujarIslas() {
+      const islas = o.islas || [];
+      if (!islas.length) return;
+      const tam = Math.round(Math.max(84, Math.min(124, g.w * 0.19))), franja = 15, yBase = margen + mh - tam - 6;
+      const capaI = s('g', {}, g.svg);
+      const punto = (ev) => { const r = g.svg.getBoundingClientRect(), f = g.w / r.width; return { x: (ev.clientX - r.left) * f, y: (ev.clientY - r.top) * f }; };
+      islas.forEach((isla, i) => {
+        const x0 = 8 + i * (tam + 8), todos = isla.p.flat();
+        const b = [Math.min(...todos.map((q) => q[0])), Math.min(...todos.map((q) => q[1])), Math.max(...todos.map((q) => q[0])), Math.max(...todos.map((q) => q[1]))];
+        const cLon = (b[0] + b[2]) / 2, cLat = (b[1] + b[3]) / 2, kI = Math.cos(cLat * Math.PI / 180);
+        const sc = Math.min((tam - 10) / Math.max((b[2] - b[0]) * kI, 1e-6), (tam - franja - 8) / Math.max(b[3] - b[1], 1e-6)) * 0.78;
+        const ox = x0 + tam / 2, oy = yBase + franja + (tam - franja) / 2;
+        const PX = (lon) => ox + (lon - cLon) * kI * sc, PY = (lat) => oy + (cLat - lat) * sc;
+        const lonI = (x) => cLon + (x - ox) / (kI * sc), latI = (y) => cLat - (y - oy) / sc;
+        const dentroDe = (p) => p.lon >= b[0] - 0.02 && p.lon <= b[2] + 0.02 && p.lat >= b[1] - 0.02 && p.lat <= b[3] + 0.02;
+        const cercana = ptsIsla.length ? ptsIsla.reduce((a, p) => (Math.hypot(p.lon - cLon, p.lat - cLat) < Math.hypot(a.lon - cLon, a.lat - cLat) ? p : a)) : null;
+        const valor = cercana ? cercana.valor : campo(X0(cLon), Y0(cLat));
+        const nombre = (deptos[isla.d] ? `${isla.n} · ${deptos[isla.d].n}` : isla.n);
+        const aqui = sel && insular(sel) && dentroDe(sel);
+
+        s('rect', { x: x0, y: yBase, width: tam, height: tam, rx: 8, fill: '#eaf2fb', 'fill-opacity': 0.96, stroke: aqui ? C.marino : '#c9d9ec', 'stroke-width': aqui ? 2.5 : 1 }, capaI);
+        s('text', { x: x0 + 8, y: yBase + 11, 'font-size': 10.5, 'font-weight': 700, fill: C.texto2, 'pointer-events': 'none' }, capaI, isla.n.split(' y ')[0]);
+        s('path', { d: isla.p.map((r) => 'M' + r.map((q) => `${PX(q[0]).toFixed(1)},${PY(q[1]).toFixed(1)}`).join('L') + 'Z').join(''), fill: colorRampa(Math.min(1, Math.max(0, (valor - vmin) / ((vmax - vmin) || 1)))), stroke: C.marino, 'stroke-width': 1.3, 'stroke-linejoin': 'round', 'pointer-events': 'none' }, capaI);
+
+        // Toda la caja es zona de clic: marca la ubicación del hogar en la isla
+        const zona = s('rect', { x: x0, y: yBase, width: tam, height: tam, rx: 8, fill: 'transparent', 'data-clic': 1, style: 'cursor:pointer' }, capaI);
+        zona.addEventListener('pointermove', (ev) => { const q = punto(ev), t = o.tip(lonI(q.x), latI(q.y), valor, nombre); mostrarTip(ev, t.titulo, t.filas); });
+        zona.addEventListener('pointerleave', ocultarTip);
+        zona.addEventListener('click', (ev) => { const q = punto(ev); o.onPunto(lonI(q.x), latI(q.y)); });
+
+        ptsIsla.filter(dentroDe).forEach((p) => {
+          const sx = PX(p.lon), sy = PY(p.lat), elegida = p.sel;
+          const c = s('circle', { cx: sx, cy: sy, r: elegida ? 7 : 5, fill: elegida ? C.marino : C.fondo, stroke: elegida ? C.fondo : C.marino, 'stroke-width': elegida ? 3 : 2, 'data-clic': 1, tabindex: 0, role: 'button', style: 'cursor:pointer', 'aria-label': `Estación ${p.nombre}: ${o.fmt(p.valor)} ${o.unidad}` }, capaI);
+          c.addEventListener('pointermove', (ev) => { ev.stopPropagation(); const t = o.tipEstacion(p); mostrarTip(ev, t.titulo, t.filas); });
+          c.addEventListener('pointerleave', ocultarTip);
+          c.addEventListener('click', (ev) => { ev.stopPropagation(); o.onClic(p); });
+          c.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); o.onClic(p); } });
+        });
+        if (aqui) s('text', { x: x0 + tam / 2, y: yBase + tam - 6, 'text-anchor': 'middle', 'font-size': 10.5, 'font-weight': 700, fill: C.marino, 'pointer-events': 'none' }, capaI, `${o.fmt(sel.valor)} ${o.unidad.split(' ')[0]}`);
+        if (o.punto && insular(o.punto) && dentroDe(o.punto)) {
+          const pin = s('g', { transform: `translate(${PX(o.punto.lon)},${PY(o.punto.lat)})`, 'pointer-events': 'none' }, capaI);
+          s('path', { d: 'M0,0C-11,-13 -10,-27 0,-27C10,-27 11,-13 0,0Z', fill: C.coral, stroke: C.fondo, 'stroke-width': 2.5, 'stroke-linejoin': 'round' }, pin);
+          s('circle', { cx: 0, cy: -17, r: 3.6, fill: C.fondo }, pin);
+        }
+      });
+    }
+    dibujarIslas();
 
     // Escala de color (fija, fuera de la vista con zoom)
     const lw = Math.min(340, g.w - 40), lx = (g.w - lw) / 2, ly = margen + mh + 20;
@@ -425,7 +497,7 @@
     const barra = document.createElement('div');
     barra.className = 'mapa-zoom';
     const botones = [['+', 'Acercar', () => zoomEn(v.z * 1.6, cx, cy)], ['−', 'Alejar', () => zoomEn(v.z / 1.6, cx, cy)],
-      ['⟲', 'Ver todo el departamento', () => { v.z = 1; programar(); }]].map(([txt, nombre, accion]) => {
+      ['⟲', 'Ver todo el mapa', () => { v.z = 1; v.lon = lonC; v.lat = latC; programar(); }]].map(([txt, nombre, accion]) => {
       const b = document.createElement('button');
       b.type = 'button'; b.textContent = txt; b.title = nombre; b.setAttribute('aria-label', nombre);
       b.addEventListener('click', accion);
@@ -439,7 +511,7 @@
     function pintarCapa() {
       capa.textContent = '';
       const rotulos = s('g', {}, capa);         // rótulos de municipio, por debajo de marcas y etiquetas
-      const pts = o.puntos.map((p) => ({ ...p, x: X(p.lon), y: Y(p.lat) }));
+      const pts = pMapa.map((p) => ({ ...p, x: X(p.lon), y: Y(p.lat) }));
       const ps = pts.find((p) => p.sel);
       // Cajas ya ocupadas, para que los rótulos de municipio no se monten sobre nada
       const cajas = pts.map((p) => ({ x: p.x - 10, y: p.y - 10, w: 20, h: 20 }));
@@ -447,7 +519,7 @@
 
       // Ubicación elegida: línea hasta la estación más cercana con la distancia
       let distCorta = '';
-      if (o.punto && ps) {
+      if (o.punto && ps && !insular(o.punto)) {
         const px = X(o.punto.lon), py = Y(o.punto.lat);
         s('line', { x1: px, y1: py, x2: ps.x, y2: ps.y, stroke: C.fondo, 'stroke-width': 6, 'stroke-linecap': 'round', 'pointer-events': 'none' }, capa);
         s('line', { x1: px, y1: py, x2: ps.x, y2: ps.y, stroke: C.marino, 'stroke-width': 2.5, 'stroke-dasharray': '7 6', 'stroke-linecap': 'round', 'pointer-events': 'none' }, capa);
@@ -481,16 +553,30 @@
         const x0 = pos.anchor === 'start' ? pos.x : pos.anchor === 'end' ? pos.x - tw : pos.x - tw / 2;
         cajas.push({ x: x0, y: ps.y - 18 + pos.dy, w: tw, h: 40 });
       }
-      if (o.punto) {
+      if (o.punto && !insular(o.punto)) {
         const pin = s('g', { transform: `translate(${X(o.punto.lon)},${Y(o.punto.lat)})`, 'pointer-events': 'none' }, capa);
         s('path', { d: 'M0,0C-11,-13 -10,-27 0,-27C10,-27 11,-13 0,0Z', fill: C.coral, stroke: C.fondo, 'stroke-width': 2.5, 'stroke-linejoin': 'round' }, pin);
         s('circle', { cx: 0, cy: -17, r: 3.6, fill: C.fondo }, pin);
       }
 
+      // Nombres de departamento (solo con el mapa alejado): en mayúsculas y tenues, para orientar sin competir
+      if (deptos.length && v.z < 2.6) {
+        deptos.forEach((d) => {
+          const w = d.n.length * 7 + 4, dx = X(d.c[0]), dy = Y(d.c[1]);
+          if (dx < w / 2 || dx > g.w - w / 2 || dy < 12 || dy > margen + mh - 6) return;
+          const c = { x: dx - w / 2, y: dy - 7, w, h: 14 };
+          if (!libre(c)) return;
+          cajas.push(c);
+          s('text', { x: dx, y: dy + 4, 'text-anchor': 'middle', 'font-size': 10.5, 'font-weight': 600, 'letter-spacing': '0.06em', fill: C.texto3, stroke: C.fondo, 'stroke-width': 2.5, 'stroke-opacity': 0.8, 'paint-order': 'stroke', 'pointer-events': 'none' }, rotulos, d.n.toUpperCase());
+        });
+      }
+
       // Rótulos de municipio por prioridad, solo los visibles y que caben sin tapar nada.
-      // Con el mapa acercado se rotulan todos; alejado, solo los de referencia.
+      // Con el mapa acercado se rotulan todos; alejado, solo los de referencia (en el país entero, las capitales).
       const pri = (m) => (m.r === undefined ? 999 : m.r);
-      munis.filter((m) => v.z >= 1.8 || m.r !== undefined).sort((a, b) => pri(a) - pri(b)).slice(0, g.w < 440 && v.z < 1.5 ? 12 : 999).forEach((m) => {
+      munis.filter((m) => (denso ? v.z >= 3 || (v.z >= 1.6 && m.r !== undefined) : v.z >= 1.8 || m.r !== undefined))
+        .filter((m) => { const x = X(m.c[0]), y = Y(m.c[1]); return x > -40 && x < g.w + 40 && y > -30 && y < margen + mh + 30; })
+        .sort((a, b) => pri(a) - pri(b)).slice(0, g.w < 440 && v.z < 1.5 ? 12 : denso ? 260 : 999).forEach((m) => {
         const w = m.n.length * 6.5 + 6, mx = X(m.c[0]), my = Y(m.c[1]);
         if (mx < -w || mx > g.w + w || my < -30 || my > margen + mh + 30) return;
         // Se prueba el centro del municipio y, si está ocupado, justo encima o debajo;

@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Calcusol · Paneles solares en Antioquia</title>
-  <meta name="description" content="Dashboard de viabilidad de sistemas solares fotovoltaicos para hogares de Antioquia, con radiación satelital corregida.">
+  <title>Calcusol · Paneles solares en Colombia</title>
+  <meta name="description" content="Dashboard de viabilidad de sistemas solares fotovoltaicos para hogares de Colombia, con radiación satelital corregida.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -13,28 +13,51 @@
 <body>
   <header class="portada">
     <div class="ancho portada-in">
-      <svg class="sol" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2" fill="currentColor"/><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></g></svg>
-      <div>
-        <h1>¿Vale la pena instalar paneles solares en Antioquia?</h1>
-        <p>Equipo Calcusol · <span id="meta-datos">Cargando datos…</span></p>
+      <p class="eyebrow">Equipo Calcusol · Energía solar residencial</p>
+      <h1 id="t-titulo">¿Vale la pena instalar paneles solares en <span class="lugar" id="t-lugar">Colombia</span>?</h1>
+      <p class="portada-sub" id="meta-datos">Cargando datos…</p>
+      <div class="chips" id="chips">
+        <p class="motor" id="motor" role="status" aria-live="polite">Comprobando la API de cálculo…</p>
       </div>
     </div>
   </header>
 
   <main class="ancho disposicion">
     <form class="filtros" id="filtros" aria-label="Datos del hogar" onsubmit="return false">
+      <div class="ubicacion" id="bloque-ubicacion">
+        <label for="f-ubicacion">Tu ubicación</label>
+        <div class="ubicacion-fila">
+          <input id="f-ubicacion" type="search" placeholder="Dirección y ciudad, o coordenadas (4.65, -74.06)" autocomplete="off" enterkeyhint="search" aria-describedby="ubic-estado">
+          <button type="button" class="boton" id="btn-buscar">Buscar</button>
+        </div>
+        <button type="button" class="boton boton-gps" id="btn-gps">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2" fill="currentColor"/><circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          Usar mi ubicación
+        </button>
+        <button type="button" class="boton boton-gps boton-conexion" id="btn-conexion" hidden>Ubicarme por mi conexión (aproximado)</button>
+        <p class="ubic-estado" id="ubic-estado" role="status" aria-live="polite"></p>
+        <ul class="ubic-resultados" id="ubic-resultados" hidden></ul>
+        <p class="ubic-credito">En Colombia, OpenStreetMap suele ubicar la calle o el barrio, no el número de la casa. Para el punto exacto, haz clic en el mapa o escribe las coordenadas. Direcciones: © colaboradores de OpenStreetMap (Nominatim).</p>
+      </div>
+      <label class="campo campo-ancho">Departamento
+        <select id="f-departamento"></select>
+      </label>
       <label class="campo campo-ancho">Estación más cercana
         <select id="f-estacion"></select>
       </label>
       <label class="campo">Consumo (kWh/mes)
-        <input id="f-consumo" type="number" min="30" max="3000" step="10" inputmode="numeric">
+        <input id="f-consumo" type="number" min="30" max="3000" step="any" inputmode="decimal">
       </label>
       <label class="campo">Estrato
         <select id="f-estrato"></select>
       </label>
-      <label class="campo">Tarifa del operador ($/kWh)
-        <input id="f-tarifa" type="number" min="100" max="3000" step="10" inputmode="numeric">
+      <label class="campo">Tarifa de subsistencia ($/kWh)
+        <input id="f-tarifa-sub" type="number" min="50" max="3000" step="any" inputmode="decimal">
       </label>
+      <label class="campo">Tarifa plena ($/kWh)
+        <input id="f-tarifa-plena" type="number" min="50" max="3000" step="any" inputmode="decimal">
+      </label>
+      <p class="info-tarifa" id="info-tarifa"></p>
       <label class="campo campo-ancho">Perfil de consumo
         <select id="f-perfil"></select>
       </label>
@@ -115,7 +138,9 @@
 
   <div class="tip" id="tip" role="status" hidden></div>
 
+  <script src="js/config.js"></script>
   <script src="js/model.js"></script>
+  <script src="js/api.js"></script>
   <script src="js/charts.js"></script>
   <script src="js/app.js"></script>
 </body>

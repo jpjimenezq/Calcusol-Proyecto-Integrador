@@ -29,12 +29,21 @@ body {
 }
 .ancho { max-width: 1880px; margin: 0 auto; padding: 0 32px; }
 
-/* Portada */
-.portada { background: var(--marino); color: #fff; }
-.portada-in { display: flex; align-items: center; gap: 16px; padding-top: 22px; padding-bottom: 22px; }
-.portada .sol { width: 36px; height: 36px; flex: none; }
-.portada h1 { margin: 0; font-size: clamp(20px, 2.6vw, 28px); font-weight: 700; line-height: 1.2; letter-spacing: -0.01em; text-wrap: balance; }
-.portada p { margin: 4px 0 0; font-size: 13px; color: #b9d4f2; }
+/* Portada: todo centrado, en azul, con una línea de acento abajo */
+.portada {
+  position: relative; overflow: hidden; color: #fff; text-align: center;
+  background:
+    radial-gradient(60% 130% at 50% -25%, rgba(106, 176, 255, 0.4), rgba(106, 176, 255, 0) 70%),
+    linear-gradient(180deg, #0b3d7a 0%, #09305f 100%);
+}
+.portada::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: linear-gradient(90deg, var(--azul), #7fb8f0 50%, var(--verde)); }
+.portada-in { display: flex; flex-direction: column; align-items: center; gap: 8px; padding-top: 22px; padding-bottom: 22px; }
+.portada .eyebrow { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: #9fc7f2; }
+.portada h1 { margin: 0; max-width: 900px; font-size: clamp(20px, 2.6vw, 30px); font-weight: 700; line-height: 1.2; letter-spacing: -0.015em; text-wrap: balance; }
+.portada h1 .lugar { color: #bfe0ff; font-weight: 800; }
+.portada p { margin: 0; font-size: 13px; color: #b9d4f2; }
+.portada p.portada-sub { font-size: 14px; }
+.portada .chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 6px; }
 
 /* Filtros */
 .filtros {
@@ -214,3 +223,33 @@ tbody th { font-weight: 500; color: var(--texto-2); }
 @media (prefers-reduced-motion: no-preference) {
   .barra i { transition: width 0.25s ease; }
 }
+
+/* Motor de cálculo (API o respaldo local) */
+.portada p.motor { display: inline-flex; align-items: center; gap: 7px; margin-top: 6px; padding: 3px 11px; border-radius: 999px; background: rgba(255, 255, 255, 0.12); color: #fff; font-size: 12.5px; font-weight: 500; }
+.motor::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #9fb4cf; }
+.motor.api::before { background: #4fd18b; }
+.motor.local::before { background: #f3bdbd; }
+.motor.calculando::before { background: #9fc7f2; }
+.portada p.demo { margin-top: 6px; padding: 3px 11px; border-radius: 6px; background: #f3bdbd; color: #5a1f1f; font-size: 12.5px; font-weight: 600; display: inline-block; }
+.contenido.calculando { opacity: 0.55; transition: opacity 0.15s ease; pointer-events: none; }
+.portada p.chip { display: inline-flex; align-items: center; padding: 3px 11px; border-radius: 999px; background: rgba(255, 255, 255, 0.12); color: #fff; font-size: 12.5px; font-weight: 500; }
+
+/* Ubicación del hogar: dirección, coordenadas o ubicación del navegador */
+.ubicacion { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; min-width: 0; font-size: 13.5px; font-weight: 600; color: var(--texto-2); }
+.ubicacion-fila { display: flex; gap: 8px; }
+.ubicacion input { flex: 1; min-width: 0; height: 46px; padding: 0 12px; border: 1px solid var(--borde); border-radius: 8px; background: #fff; color: var(--marino); font: 600 15px Inter, system-ui, sans-serif; }
+.ubicacion input:focus-visible, .ubic-resultados button:focus-visible { outline: 2px solid var(--azul); outline-offset: 2px; }
+.ubicacion-fila .boton { height: 46px; padding: 0 16px; background: var(--marino); color: #fff; border-color: var(--marino); font-size: 14px; }
+.boton-gps { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; height: 42px; }
+.boton-gps svg { width: 18px; height: 18px; }
+.ubic-estado { margin: 0; min-height: 1.3em; font-size: 13px; font-weight: 500; line-height: 1.4; color: var(--texto-2); overflow-wrap: anywhere; }
+.ubic-estado.error { color: #b3261e; font-weight: 600; }
+.ubic-resultados { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.ubic-resultados button { width: 100%; padding: 7px 10px; border: 1px solid var(--borde); border-radius: 8px; background: #fff; color: var(--texto-2); font: 500 12.5px/1.35 Inter, system-ui, sans-serif; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.ubic-resultados button:hover { border-color: var(--azul); color: var(--marino); }
+.ubic-credito { margin: 0; font-size: 11px; font-weight: 500; color: var(--texto-3); }
+.ubic-resultados .ubic-otras { font-size: 11.5px; font-weight: 600; color: var(--texto-3); }
+.boton-conexion { font-size: 13px; }
+.boton-conexion[hidden] { display: none; }
+
+.info-tarifa { grid-column: 1 / -1; margin: -2px 0 0; font-size: 12.5px; font-weight: 500; line-height: 1.4; color: var(--texto-3); }

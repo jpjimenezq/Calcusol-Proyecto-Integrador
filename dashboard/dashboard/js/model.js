@@ -26,34 +26,47 @@
     },
   };
 
-  /* Valores de referencia. Todos se pueden cambiar en el panel de supuestos. */
+  /* Valores de referencia, los mismos de la ficha de supuestos de R3 (la que usa la API).
+   * Todos se pueden cambiar en el panel de supuestos. */
   const SUPUESTOS = {
-    tarifa: 900,            // $/kWh, costo unitario (CU) del operador
-    comercializacion: 120,  // $/kWh que se paga sobre la energía permutada (CREG 174)
-    precioBolsa: 300,       // $/kWh al que se liquidan excedentes por encima de lo importado
-    capexFijo: 3.0e6,       // $ por instalación (diseño, trámites, medidor bidireccional)
-    capexKwp: 4.2e6,        // $ por kWp instalado
-    omPct: 0.01,            // operación y mantenimiento anual, fracción del CAPEX
-    degradacion: 0.005,     // pérdida anual de producción de los paneles
-    alzaTarifa: 0.04,       // crecimiento anual de la tarifa
-    descuento: 0.10,        // tasa de descuento del VPN
+    tarifaSub: 842.59,      // $/kWh hasta el consumo de subsistencia (EPM, octubre 2026; la del estrato 3)
+    tarifaPlena: 991.29,    // $/kWh sobre el consumo de subsistencia (EPM, octubre 2026)
+    comercializacion: 114.28, // $/kWh que se paga sobre la energía permutada (CREG 174)
+    precioBolsa: 331,       // $/kWh al que se liquidan excedentes por encima de lo importado
+    capexFijo: 0,           // $ por instalación; R3 no separa un costo fijo (todo va en el costo por kWp)
+    capexKwp: 5.0e6,        // $ por kWp instalado
+    omPct: 0.012,           // operación y mantenimiento anual, fracción del CAPEX
+    degradacion: 0.004,     // pérdida anual de producción de los paneles
+    degradacionInicial: 0.01, // pérdida de producción en el primer año
+    alzaTarifa: 0,          // crecimiento real anual de la tarifa (R3 la deja constante)
+    descuento: 0.09,        // tasa de descuento del VPN
     horizonte: 25,          // años de vida útil evaluados
-    perdidas: 0.14,         // inversor, cableado, suciedad, sombras
-    gamma: -0.004,          // coeficiente de temperatura de potencia (1/°C)
+    perdidas: 0.14,         // cableado, suciedad, sombras
+    eficiencia: 0.96,       // eficiencia del inversor
+    anioInversor: 15,       // año en que se cambia el inversor
+    costoInversor: 1333750, // $ del inversor de reemplazo
+    gamma: -0.0029,         // coeficiente de temperatura de potencia (1/°C), ficha del módulo
     noct: 45,               // temperatura nominal de operación de la celda (°C)
   };
+  /* Hogar y sistema por defecto (R3): estrato 3, 157 kWh/mes y un sistema de 1,5 kWp. */
+  const HOGAR = { estrato: 3, consumo: 157, kwp: [1, 1.5, 2] };
 
-  const SUBSIDIO = { 1: 0.60, 2: 0.50, 3: 0.15, 4: 0, 5: -0.20, 6: -0.20 };
+  /* Tarifas de EPM por estrato, de la ficha de supuestos de R3: la de subsistencia (hasta el consumo de subsistencia)
+   * y la plena (el resto). Cuando la API responde, el dashboard usa la tabla que ella trae. */
+  const TARIFAS = {
+    1: { subsistencia: 427.04, plena: 991.29 }, 2: { subsistencia: 533.81, plena: 991.29 },
+    3: { subsistencia: 842.59, plena: 991.29 }, 4: { subsistencia: 991.29, plena: 991.29 },
+    5: { subsistencia: 1189.54, plena: 1189.54 }, 6: { subsistencia: 1189.54, plena: 1189.54 },
+  };
 
   /* Consumo de subsistencia (UPME): 130 kWh/mes a 1000 m o más, 173 por debajo. */
   const subsistencia = (altitud) => (altitud >= 1000 ? 130 : 173);
 
-  /* Factura de energía de un mes para `kwh` importados de la red. */
-  function factura(kwh, estrato, tarifa, altitud) {
-    const s = SUBSIDIO[estrato];
-    if (s < 0) return kwh * tarifa * (1 - s);            // contribución estratos 5 y 6
+  /* Factura de energía de un mes para `kwh` importados de la red: hasta el consumo de subsistencia se cobra la tarifa
+   * de subsistencia y el resto la plena (igual que factura_energia de R3). */
+  function factura(kwh, tarifaSub, tarifaPlena, altitud) {
     const base = Math.min(kwh, subsistencia(altitud));
-    return tarifa * (base * (1 - s) + (kwh - base));     // subsidio solo hasta la subsistencia
+    return tarifaSub * base + tarifaPlena * Math.max(0, kwh - base);
   }
 
   /* Generación del día promedio: kWh por hora [mes][hora 0-23]. */
@@ -63,7 +76,7 @@
       fila.forEach((g, i) => {
         const tCelda = est.clim.t2m[m][i] + g * (sup.noct - 20) / 800;
         const factorT = 1 + sup.gamma * (tCelda - 25);
-        dia[horas[i]] = Math.max(0, kwp * (g / 1000) * factorT * (1 - sup.perdidas));
+        dia[horas[i]] = Math.max(0, kwp * (g / 1000) * factorT * (1 - sup.perdidas) * sup.eficiencia);
       });
       return dia;
     });
@@ -83,11 +96,11 @@
       const generado = g * dm, autoconsumo = auto * dm;
       const excedente = generado - autoconsumo;
       const importado = e.consumo - autoconsumo;
-      const sinSolar = factura(e.consumo, e.estrato, sup.tarifa, e.est.alt);
+      const sinSolar = factura(e.consumo, sup.tarifaSub, sup.tarifaPlena, e.est.alt);
       // CREG 174 de 2021: los excedentes se permutan 1 a 1 contra lo importado
       // (se paga la comercialización); lo que sobra se liquida a precio de bolsa.
       const conSolar = excedente <= importado
-        ? factura(importado - excedente, e.estrato, sup.tarifa, e.est.alt) + excedente * sup.comercializacion
+        ? factura(importado - excedente, sup.tarifaSub, sup.tarifaPlena, e.est.alt) + excedente * sup.comercializacion
         : importado * sup.comercializacion - (excedente - importado) * sup.precioBolsa;
       return { generado, autoconsumo, excedente, importado, sinSolar, conSolar, ahorro: sinSolar - conSolar };
     });
@@ -100,8 +113,11 @@
     let vpn = -capex, payback = null;
     const flujos = [-capex];
     for (let t = 1; t <= sup.horizonte; t++) {
+      // Igual que R3: el año 1 pierde la degradación inicial, luego la anual; el mantenimiento es fijo y en el año del
+      // inversor se paga su reemplazo
       const alza = Math.pow(1 + sup.alzaTarifa, t - 1);
-      const f = ahorroAnual * Math.pow(1 - sup.degradacion, t - 1) * alza - capex * sup.omPct * alza;
+      const f = ahorroAnual * (1 - sup.degradacionInicial) * Math.pow(1 - sup.degradacion, t - 1) * alza
+        - capex * sup.omPct - (t === sup.anioInversor ? sup.costoInversor : 0);
       flujos.push(f);
       const antes = flujo[t - 1];
       flujo.push(antes + f);
@@ -153,5 +169,5 @@
       .reduce((a, b) => (b.km < a.km ? b : a));
   }
 
-  return { distanciaKm, masCercana, DIAS_MES, PERFILES, SUPUESTOS, SUBSIDIO, subsistencia, factura, generacion, simular, tir, perfilHorario };
+  return { distanciaKm, masCercana, DIAS_MES, PERFILES, SUPUESTOS, HOGAR, TARIFAS, subsistencia, factura, generacion, simular, tir, perfilHorario };
 });

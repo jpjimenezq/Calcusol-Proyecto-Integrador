@@ -13,6 +13,7 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 
 from calcusol.fisica_finanzas import calcusol_r3 as r3
@@ -25,7 +26,18 @@ VERSION = "radiacion-v1 (LightGBM, variante A0, 17 features)"
 
 CFG = r3.cargar_config()  # ficha de supuestos empaquetada con calcusol
 
-app = FastAPI(title="Calcusol · API", version="1.1.0")
+app = FastAPI(title="Calcusol · API", version="1.2.0")
+
+# El dashboard se sirve desde otro puerto (por ejemplo http://localhost:8080): sin CORS el navegador
+# bloquea sus llamadas. Por defecto se permite cualquier puerto de localhost; para otros
+# orígenes, CORS_ORIGENES="https://mi-sitio.com,https://otro.com".
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o for o in os.environ.get("CORS_ORIGENES", "").split(",") if o],
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
 
 
 # ---------------------------------------------------------------- radiación (R1)
@@ -113,6 +125,8 @@ class Sistema(BaseModel):
     kwh_mes: float | None = Field(default=None, gt=0, description="Consumo mensual del hogar, kWh")
     estrato: int | None = Field(default=None, ge=1, le=6)
     f_tarifa: float = Field(default=1.0, gt=0, description="Factor sobre la tarifa EPM")
+    tarifa_cop_kwh: float | None = Field(default=None, gt=0, description="Tarifa plena del operador, COP/kWh. "
+                                         "Reescala la tarifa EPM del estrato (el subsidio se conserva)")
     precio_excedente_cop: float | None = Field(default=None, ge=0, description="Precio del excedente vendido, COP/kWh")
     costo_kwp_cop: float | None = Field(default=None, gt=0)
     tasa_descuento: float | None = Field(default=None, gt=0, lt=1)
@@ -174,6 +188,15 @@ def _serie(entrada: SerieSolar) -> pd.DatetimeIndex:
     return pd.DatetimeIndex(entrada.fechas)
 
 
+def _factor_tarifa(s: Sistema) -> float:
+    """f_tarifa, combinado con tarifa_cop_kwh si se envió (se compara con la tarifa plena del estrato)."""
+    if s.tarifa_cop_kwh is None:
+        return s.f_tarifa
+    estrato = s.estrato if s.estrato is not None else CFG["consumo"]["estrato"]
+    plena = r3.v(CFG["finanzas"]["tarifas_epm_cop_kwh"])[estrato]["plena"]
+    return s.f_tarifa * s.tarifa_cop_kwh / plena
+
+
 HORAS_MINIMAS_ANIO = 8000  # un año completo tiene 8.760 horas
 
 
@@ -197,6 +220,35 @@ def _con_avisos(res: dict, n_horas: int | None = None) -> dict:
 def supuestos():
     """Ficha de supuestos: cada parámetro con su valor, fuente y estado (OK, PUBLICADO, DECISION, PENDIENTE)."""
     return r3.ficha_supuestos(CFG).to_dict(orient="records")
+
+
+@app.get("/v1/parametros")
+def parametros():
+    """Valores por defecto de la ficha de supuestos, ya ordenados para un cliente (el dashboard los usa para
+    sus controles): hogar, sistema, finanzas, tarifas EPM por estrato, consumo de subsistencia y, de cada
+    parámetro, su fuente y su estado (OK, PUBLICADO, DECISION, PENDIENTE)."""
+    v = r3.v
+    s, c, f = CFG["sistema"], CFG["consumo"], CFG["finanzas"]
+    fuentes = {f"{grupo}.{k}": {"fuente": it.get("fuente", ""), "estado": it.get("estado", "")}
+               for grupo in ("sistema", "consumo", "finanzas") for k, it in CFG[grupo].items()
+               if isinstance(it, dict) and "valor" in it}
+    return {
+        "hogar": {"estrato": c["estrato"], "kwh_mes": v(c["kwh_mes_hogar"]), "kwp": v(s["kWp"])},
+        "sistema": {"perdidas": v(s["perdidas_sistema"]), "eficiencia_inversor": v(s["eficiencia_inversor"]),
+                    "degradacion_primer_anio": v(s["degradacion_primer_anio"]), "degradacion_anual": v(s["degradacion_anual"]),
+                    "noct_c": v(s["noct_c"]), "coef_temp_potencia_por_c": v(s["coef_temp_potencia_por_c"]),
+                    "inclinacion_grados": v(s["inclinacion_grados"]), "azimut_grados": v(s["azimut_grados"])},
+        "finanzas": {"costo_por_kwp_cop": v(f["costo_por_kWp_cop"]), "mantenimiento_anual_pct_capex": v(f["mantenimiento_anual_pct_capex"]),
+                     "anio_reemplazo_inversor": v(f["anio_reemplazo_inversor"]), "costo_reemplazo_inversor_cop": v(f["costo_reemplazo_inversor_cop"]),
+                     "cargo_comercializacion_cop_kwh": v(f["cargo_comercializacion_cop_kwh"]),
+                     "precio_excedente_cop_kwh": v(f["precio_excedente_tramo2_cop"]), "tasa_descuento": v(f["tasa_descuento"]),
+                     "incremento_real_tarifa_anual": v(f["incremento_real_tarifa_anual"]), "horizonte_anios": v(f["horizonte_anios"]),
+                     "factor_emision_kgco2_kwh": v(f["factor_emision_kgco2_kwh"])},
+        "tarifas_cop_kwh": {str(k): t for k, t in v(f["tarifas_epm_cop_kwh"]).items()},
+        "consumo_subsistencia_kwh_mes": v(c["consumo_subsistencia_kwh_mes"]),
+        "sensibilidad": CFG.get("sensibilidad", {}),
+        "fuentes": fuentes,
+    }
 
 
 @app.post("/v1/produccion")
@@ -227,7 +279,7 @@ def ahorro(e: AhorroEntrada):
     cons = r3.consumo_hogar(fechas, CFG, s.kwh_mes)
     h = r3.balance(prod, cons, fechas)
     estrato = s.estrato if s.estrato is not None else CFG["consumo"]["estrato"]
-    res = r3.ahorro_anual(h, CFG, estrato, u.altitud, s.f_tarifa, s.precio_excedente_cop)
+    res = r3.ahorro_anual(h, CFG, estrato, u.altitud, _factor_tarifa(s), s.precio_excedente_cop)
     return _con_avisos(_limpio(res), len(e.serie.fechas))
 
 
@@ -241,6 +293,78 @@ def finanzas(e: FinanzasEntrada):
     return _con_avisos(_limpio(r3.finanzas(a, CFG, e.kwp, e.costo_kwp_cop, e.tasa_descuento)))
 
 
+class Climatologia(BaseModel):
+    """Año típico resumido: radiación y temperatura promedio de cada mes (fila) y de cada hora
+    con sol (columna). 'horas' son las horas de cierre 0-23 de las columnas, como en la tabla gold.
+    Las demás horas del día se toman como noche."""
+    horas: list[int] = Field(min_length=1, max_length=24)
+    ghi: list[list[float]] = Field(description="Wh/m², 12 meses x len(horas)")
+    t_aire: list[list[float]] = Field(description="°C, 12 meses x len(horas)")
+
+    @model_validator(mode="after")
+    def forma(self):
+        if len(set(self.horas)) != len(self.horas) or any(not 0 <= h <= 23 for h in self.horas):
+            raise ValueError("horas debe tener valores distintos entre 0 y 23")
+        for nombre in ("ghi", "t_aire"):
+            m = getattr(self, nombre)
+            if len(m) != 12 or any(len(f) != len(self.horas) for f in m):
+                raise ValueError(f"{nombre} debe ser una matriz de 12 meses x {len(self.horas)} horas")
+        if any(v < 0 for f in self.ghi for v in f):
+            raise ValueError("ghi no puede ser negativa")
+        return self
+
+
+class Ajustes(BaseModel):
+    """Parámetros de la ficha que se pueden cambiar en esta llamada. Si no se envían, se usa la ficha."""
+    perdidas: float | None = Field(default=None, ge=0, le=0.6, description="Pérdidas del sistema, fracción")
+    eficiencia_inversor: float | None = Field(default=None, gt=0.5, le=1, description="Eficiencia del inversor, fracción")
+    degradacion_primer_anio: float | None = Field(default=None, ge=0, le=0.1)
+    anio_reemplazo_inversor: int | None = Field(default=None, ge=1, le=40)
+    costo_reemplazo_inversor_cop: float | None = Field(default=None, ge=0)
+    tarifa_subsistencia_cop: float | None = Field(default=None, gt=0, description="COP/kWh hasta el consumo de subsistencia, del estrato de la llamada")
+    tarifa_plena_cop: float | None = Field(default=None, gt=0, description="COP/kWh sobre el consumo de subsistencia, del estrato de la llamada")
+    degradacion_anual: float | None = Field(default=None, ge=0, le=0.05)
+    mantenimiento_pct: float | None = Field(default=None, ge=0, le=0.1, description="Fracción del costo por año")
+    alza_tarifa: float | None = Field(default=None, ge=-0.1, le=0.3, description="Cambio real anual de la tarifa")
+    horizonte_anios: int | None = Field(default=None, ge=5, le=40)
+    comercializacion_cop: float | None = Field(default=None, ge=0, description="COP por kWh de excedente permutado")
+    perfil_consumo: list[float] | None = Field(default=None, min_length=24, max_length=24,
+                                               description="Reparto del consumo diario en 24 horas (se normaliza)")
+
+    @model_validator(mode="after")
+    def perfil_valido(self):
+        if self.perfil_consumo is not None and (min(self.perfil_consumo) < 0 or sum(self.perfil_consumo) <= 0):
+            raise ValueError("perfil_consumo debe tener valores no negativos y sumar más que cero")
+        return self
+
+
+class SimulacionClimaEntrada(BaseModel):
+    ubicacion: Ubicacion
+    climatologia: Climatologia
+    sistema: Sistema = Field(default_factory=Sistema)
+    ajustes: Ajustes = Field(default_factory=Ajustes)
+
+
+@app.post("/v1/simulacion/climatologia")
+def simulacion_climatologia(e: SimulacionClimaEntrada):
+    """Simulación completa desde una climatología mes x hora (la que usa el dashboard). Arma el año de
+    8.760 horas y devuelve, además de los totales, el balance de cada mes, el flujo de caja acumulado
+    y la producción del día promedio de cada mes."""
+    u, s, c = e.ubicacion, e.sistema, e.climatologia
+    anio = r3.anio_desde_climatologia(c.ghi, c.t_aire, c.horas)
+    a = e.ajustes
+    ajustes = a.model_dump(exclude={"perfil_consumo", "tarifa_subsistencia_cop", "tarifa_plena_cop"})
+    estrato = s.estrato if s.estrato is not None else CFG["consumo"]["estrato"]
+    tarifas = {"estrato": estrato, "subsistencia": a.tarifa_subsistencia_cop, "plena": a.tarifa_plena_cop}
+    cfg = r3.cfg_con_ajustes(CFG, ajustes, a.perfil_consumo, tarifas)
+    res = r3.simulacion_detallada(
+        pd.DatetimeIndex(anio["Fecha"]), anio["ghi"].to_numpy(), anio["T2M"].to_numpy(),
+        u.latitud, u.longitud, u.altitud, cfg,
+        estrato=s.estrato, kwp=s.kwp, costo_kwp=s.costo_kwp_cop, kwh_mes=s.kwh_mes,
+        f_tarifa=_factor_tarifa(s), precio_exc2=s.precio_excedente_cop, tasa=s.tasa_descuento)
+    return _con_avisos(_limpio(res))
+
+
 @app.post("/v1/simulacion")
 def simulacion(e: SimulacionEntrada):
     """Pipeline completo: producción, consumo, ahorro y finanzas a partir de una serie horaria."""
@@ -249,5 +373,5 @@ def simulacion(e: SimulacionEntrada):
         _serie(e.serie), np.array(e.serie.ghi), np.array(e.serie.t_aire),
         u.latitud, u.longitud, u.altitud, CFG,
         estrato=s.estrato, kwp=s.kwp, costo_kwp=s.costo_kwp_cop, kwh_mes=s.kwh_mes,
-        f_tarifa=s.f_tarifa, precio_exc2=s.precio_excedente_cop, tasa=s.tasa_descuento)
+        f_tarifa=_factor_tarifa(s), precio_exc2=s.precio_excedente_cop, tasa=s.tasa_descuento)
     return _con_avisos(_limpio(res), len(e.serie.fechas))

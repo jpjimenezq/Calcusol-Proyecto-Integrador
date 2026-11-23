@@ -402,14 +402,8 @@ def consumo_subsistencia(altitud: float, cfg) -> float:
     return cs["desde_1000m"] if altitud >= 1000 else cs["bajo_1000m"]
 
 
-def ahorro_anual(h: pd.DataFrame, cfg, estrato: int, altitud: float,
-                 f_tarifa=1.0, precio_exc2=None) -> dict:
-    """Ahorro del primer año = factura SIN paneles - factura CON paneles, mes a mes.
-    Con paneles (CREG 174/2021, Concepto CREG 3023/2026):
-      - la casa compra a la red solo lo que el panel no cubre (importación);
-      - el excedente hasta lo importado en el mes se descuenta kWh por kWh
-        (crédito de energía), pero se paga el cargo de comercialización Cv;
-      - el excedente que sobra se le paga a la familia a precio de bolsa/MC."""
+def _ahorro_mensual(h: pd.DataFrame, cfg, estrato: int, altitud: float, f_tarifa=1.0, precio_exc2=None):
+    """Energía y facturas de cada mes. Lo comparten ahorro_anual y el detalle para gráficos."""
     fz = cfg["finanzas"]
     cs = consumo_subsistencia(altitud, cfg)
     cv = v(fz["cargo_comercializacion_cop_kwh"])
@@ -420,6 +414,19 @@ def ahorro_anual(h: pd.DataFrame, cfg, estrato: int, altitud: float,
     sin_panel = factura_energia(m.cons, estrato, cs, cfg, f_tarifa)
     solo_auto = factura_energia(m.imp, estrato, cs, cfg, f_tarifa)
     con_credito = factura_energia(m.imp - t1, estrato, cs, cfg, f_tarifa) + cv * t1
+    return m, t1, t2, sin_panel, solo_auto, con_credito, p2, cs
+
+
+def ahorro_anual(h: pd.DataFrame, cfg, estrato: int, altitud: float,
+                 f_tarifa=1.0, precio_exc2=None) -> dict:
+    """Ahorro del primer año = factura SIN paneles - factura CON paneles, mes a mes.
+    Con paneles (CREG 174/2021, Concepto CREG 3023/2026):
+      - la casa compra a la red solo lo que el panel no cubre (importación);
+      - el excedente hasta lo importado en el mes se descuenta kWh por kWh
+        (crédito de energía), pero se paga el cargo de comercialización Cv;
+      - el excedente que sobra se le paga a la familia a precio de bolsa/MC."""
+    m, t1, t2, sin_panel, solo_auto, con_credito, p2, cs = _ahorro_mensual(
+        h, cfg, estrato, altitud, f_tarifa, precio_exc2)
     ahorro_auto = (sin_panel - solo_auto).sum()
     valor_credito = (solo_auto - con_credito).sum()
     valor_t2 = (t2 * p2).sum()
@@ -451,8 +458,8 @@ def tir(capex: float, flujo: np.ndarray) -> float:
     return (lo + hi) / 2
 
 
-def finanzas(a: dict, cfg, kwp: float, costo_kwp=None, tasa=None) -> dict:
-    """Flujo de caja a N años -> VPN, Payback simple y Payback descontado."""
+def _flujo_caja(a: dict, cfg, kwp: float, costo_kwp=None, tasa=None):
+    """Flujo de caja anual (años 1..N) a partir del ahorro del primer año."""
     fz, s = cfg["finanzas"], cfg["sistema"]
     costo_kwp = v(fz["costo_por_kWp_cop"]) if costo_kwp is None else costo_kwp
     tasa = v(fz["tasa_descuento"]) if tasa is None else tasa
@@ -467,6 +474,19 @@ def finanzas(a: dict, cfg, kwp: float, costo_kwp=None, tasa=None) -> dict:
     flujo = ahorro1 * rel * (1 + inc) ** (anios - 1) - om
     flujo = flujo - np.where(anios == int(v(fz["anio_reemplazo_inversor"])),
                              v(fz["costo_reemplazo_inversor_cop"]), 0)
+    return capex, om, ahorro1, rel, flujo, tasa, anios
+
+
+def flujo_acumulado(a: dict, cfg, kwp: float, costo_kwp=None, tasa=None) -> list:
+    """Flujo de caja acumulado del año 0 (la inversión, en negativo) al año N."""
+    capex, _, _, _, flujo, _, _ = _flujo_caja(a, cfg, kwp, costo_kwp, tasa)
+    return [float(x) for x in np.concatenate([[-capex], -capex + np.cumsum(flujo)])]
+
+
+def finanzas(a: dict, cfg, kwp: float, costo_kwp=None, tasa=None) -> dict:
+    """Flujo de caja a N años -> VPN, Payback simple y Payback descontado."""
+    fz = cfg["finanzas"]
+    capex, om, ahorro1, rel, flujo, tasa, anios = _flujo_caja(a, cfg, kwp, costo_kwp, tasa)
     desc = flujo / (1 + tasa) ** anios
     vpn = -capex + desc.sum()
 
@@ -512,6 +532,92 @@ def flujo_desde_serie(fechas, ghi, t_aire, lat: float, lon: float, alt: float, c
     h = balance(prod, cons, fechas)
     a = ahorro_anual(h, cfg, estrato, alt, f_tarifa, precio_exc2)
     return a | finanzas(a, cfg, kwp, costo_kwp, tasa)
+
+
+def anio_desde_climatologia(ghi, t_aire, horas) -> pd.DataFrame:
+    """Año de 8.760 horas armado con una climatología mes x hora (igual que anio_tipico):
+    cada hora del año toma el valor de su (mes, hora de cierre). Las horas que no están en
+    'horas' son de noche: radiación 0 y temperatura media del mes.
+    ghi y t_aire son matrices [12 meses][len(horas)]."""
+    ghi, t_aire = np.asarray(ghi, float), np.asarray(t_aire, float)
+    g, t = np.zeros((12, 24)), np.zeros((12, 24))
+    for i, hora in enumerate(horas):
+        g[:, hora], t[:, hora] = ghi[:, i], t_aire[:, i]
+    idx = pd.date_range(f"{ANIO_REF}-01-01 01:00", periods=8760, freq="h")
+    mes, hora = idx.month.to_numpy() - 1, idx.hour.to_numpy()
+    temp = np.where(np.isin(hora, list(horas)), t[mes, hora], t_aire.mean(axis=1)[mes])
+    return pd.DataFrame({"Fecha": idx, "ghi": g[mes, hora], "T2M": temp})
+
+
+def simulacion_detallada(fechas, ghi, t_aire, lat: float, lon: float, alt: float, cfg,
+                         estrato=None, kwp=None, costo_kwp=None, kwh_mes=None, f_tarifa=1.0,
+                         precio_exc2=None, tasa=None) -> dict:
+    """Como flujo_desde_serie, más lo que necesitan los gráficos: el balance de cada mes,
+    el flujo de caja acumulado y la producción del día promedio de cada mes (kWh por hora,
+    indexada por la hora de cierre 0-23, como la tabla gold)."""
+    estrato = cfg["consumo"]["estrato"] if estrato is None else estrato
+    kwp = v(cfg["sistema"]["kWp"]) if kwp is None else kwp
+    fechas = pd.DatetimeIndex(fechas)
+    prod = produccion_panel(ghi, t_aire, fechas, lat, lon, alt, cfg, kwp)
+    cons = consumo_hogar(fechas, cfg, kwh_mes)
+    h = balance(prod, cons, fechas)
+    a = ahorro_anual(h, cfg, estrato, alt, f_tarifa, precio_exc2)
+    m, t1, t2, sin_panel, _, con_credito, p2, _ = _ahorro_mensual(h, cfg, estrato, alt, f_tarifa, precio_exc2)
+    con_solar = con_credito - t2 * p2
+    mensual = [{"mes": int(i), "generado": float(m.loc[i, "prod"]), "consumo": float(m.loc[i, "cons"]),
+                "autoconsumo": float(m.loc[i, "auto"]), "excedente": float(m.loc[i, "exced"]),
+                "importado": float(m.loc[i, "imp"]), "factura_sin_solar": float(sin_panel[k]),
+                "factura_con_solar": float(con_solar.iloc[k]), "ahorro": float(sin_panel[k] - con_solar.iloc[k])}
+               for k, i in enumerate(m.index)]
+    dia = (h.assign(mes=h.Fecha.dt.month, hora=h.Fecha.dt.hour).groupby(["mes", "hora"])["prod"].mean()
+           .unstack(fill_value=0).reindex(index=range(1, 13), columns=range(24), fill_value=0))
+    return a | finanzas(a, cfg, kwp, costo_kwp, tasa) | {
+        "mensual": mensual,
+        "flujo_acumulado_cop": flujo_acumulado(a, cfg, kwp, costo_kwp, tasa),
+        "produccion_dia_promedio_kwh": [[float(x) for x in fila] for fila in dia.to_numpy()],
+    }
+
+
+# Parámetros de la ficha que un cliente (por ejemplo el dashboard) puede cambiar en cada llamada
+AJUSTES_FICHA = {
+    "perdidas": ("sistema", "perdidas_sistema"),
+    "degradacion_anual": ("sistema", "degradacion_anual"),
+    "mantenimiento_pct": ("finanzas", "mantenimiento_anual_pct_capex"),
+    "alza_tarifa": ("finanzas", "incremento_real_tarifa_anual"),
+    "horizonte_anios": ("finanzas", "horizonte_anios"),
+    "comercializacion_cop": ("finanzas", "cargo_comercializacion_cop_kwh"),
+    "eficiencia_inversor": ("sistema", "eficiencia_inversor"),
+    "degradacion_primer_anio": ("sistema", "degradacion_primer_anio"),
+    "anio_reemplazo_inversor": ("finanzas", "anio_reemplazo_inversor"),
+    "costo_reemplazo_inversor_cop": ("finanzas", "costo_reemplazo_inversor_cop"),
+}
+
+
+def cfg_con_ajustes(cfg, ajustes: dict, perfil_consumo=None, tarifas: dict | None = None):
+    """Copia de la ficha con otros valores (claves de AJUSTES_FICHA), otra forma del consumo diario de 24 horas
+    y/o otras tarifas del estrato: tarifas = {"estrato": 3, "subsistencia": 842.59, "plena": 991.29} (las claves
+    None se ignoran). Los valores None se ignoran. No cambia el archivo."""
+    ajustes = {k: x for k, x in ajustes.items() if x is not None}
+    if tarifas and tarifas.get("subsistencia") is None and tarifas.get("plena") is None:
+        tarifas = None
+    if not ajustes and perfil_consumo is None and not tarifas:
+        return cfg
+    c = copy.deepcopy(cfg)
+    if tarifas:
+        tabla = c["finanzas"]["tarifas_epm_cop_kwh"]["valor"]
+        estrato = int(tarifas["estrato"])
+        nuevas = dict(tabla[estrato])
+        for k in ("subsistencia", "plena"):
+            if tarifas.get(k) is not None:
+                nuevas[k] = float(tarifas[k])
+        tabla[estrato] = nuevas
+    for k, x in ajustes.items():
+        grupo, clave = AJUSTES_FICHA[k]
+        c[grupo][clave]["valor"] = x
+    if perfil_consumo is not None:
+        c["consumo"]["forma_dia_laboral"]["valor"] = list(perfil_consumo)
+        c["consumo"]["forma_fin_de_semana"]["valor"] = list(perfil_consumo)
+    return c
 
 
 def cfg_con(cfg, inclinacion=None, azimut=None):
