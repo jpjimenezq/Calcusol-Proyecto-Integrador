@@ -11,8 +11,9 @@
 
 datos:
   # ---- VERSIÓN FINAL (21-nov-2026) ----
-  tabla_gold: datos/gold_v1_unico.parquet           # gold v1 de Felipe (R5): 123 estaciones, 2005-2022
-  modelo: datos/modelo_lgbm.joblib                  # modelo final de R1: LightGBM, 17 variables
+  tabla_gold: data/gold/dataset_modelo.parquet      # gold v1 en un solo parquet (calcusol.gold.consolidar)
+  # Rutas relativas: desde la raíz del proyecto (en la imagen de la API, /app). MODELO_RUTA las reemplaza.
+  modelo: models/radiacion/v1/modelo_lgbm.txt       # modelo final de R1: LightGBM, 17 variables (el mismo de /predict)
   # El LightGBM predice la DIFERENCIA con la NASA (IDEAM - NASA): Prediccion = NASA + modelo
   modelo_predice: diferencia_con_nasa               # o: radiacion (modelos que predicen el valor directo)
   # R1 calculó zenit, azimut y g0_horiz con la hora Fecha + 30 min (verificado contra su Excel)
@@ -22,7 +23,7 @@ datos:
   #  - hoja mejora_por_sitio: columna caso_sugerido (3 casos: mayor, mediana y menor mejora)
   #  - hoja serie_horaria: IDEAM, NASA y modelo hora por hora en el año con más datos de cada caso.
   #    El modelo viene de un pliegue que NO vio ese sitio: es el resultado honesto para un lugar nuevo.
-  casos_r2: datos/evaluacion_lightgbm_final.xlsx
+  casos_r2: src/calcusol/validacion/resultados/evaluacion_lightgbm.xlsx  # lo genera validacion/evaluar_modelo.py
   columna_mejora: mejora_para_regla_D16             # mejora del error MENSUAL (cifra de negocio de R2)
   columna_modelo_r2: Modelo_principal               # LightGBM con ubicación
   # (Versión anterior: predicciones ya hechas por R2. Vacío = se usa el modelo de arriba.)

@@ -19,7 +19,7 @@ setup:
 data:
 	$(PY) pipeline/build_data.py
 
-# Sin dataset_modelo.parquet: necesita pvlib y lightgbm, que no están en el entorno de make setup
+# Sin data/gold/dataset_modelo.parquet: descarga NASA POWER (necesita internet) y usa el modelo de la API
 demo-data:
 	uv run --no-project --with pvlib --with lightgbm --with pandas --with numpy --with pyyaml --with joblib python pipeline/build_demo_data.py
 

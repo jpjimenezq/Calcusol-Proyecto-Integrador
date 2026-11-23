@@ -39,8 +39,8 @@ python -m http.server 8080 -d dashboard/dashboard      # y abrir http://localhos
 
 | Ruta | Contenido |
 |---|---|
-| `dataset_modelo.parquet` | Datos horarios IDEAM + NASA POWER de 29 departamentos (fuente) |
-| `modelo_radiacion_calcusol.joblib` | Modelo XGBoost que corrige la radiación satelital |
+| `../data/gold/dataset_modelo.parquet` | Datos horarios IDEAM + NASA POWER (fuente; lo crea `python -m calcusol.gold.consolidar`) |
+| `../models/radiacion/v1/modelo_lgbm.txt` | Modelo LightGBM de R1 (17 variables) que corrige la radiación satelital; es el mismo de la API |
 | `pipeline/build_data.py` | Aplica el modelo al parquet y exporta el JSON del dashboard (`--departamento` para uno solo) |
 | `pipeline/build_demo_data.py` | Datos de demostración: NASA POWER en las capitales, corregida con el modelo de la API |
 | `pipeline/build_geo.py` | Genera los contornos de Colombia (país, departamentos y municipios) desde geoBoundaries |

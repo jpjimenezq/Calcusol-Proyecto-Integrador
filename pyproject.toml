@@ -19,6 +19,13 @@ dependencies = [
     "s3fs>=2024.6",         # lectura/escritura en s3:// (Gold y modelos)
 ]
 
+[project.optional-dependencies]
+# Solo para ml/comparar_modelos.py y ml/buscar_hiperparametros.py (o notebooks/comparacion_modelos.ipynb)
+comparacion = [
+    "xgboost>=2.0",
+    "optuna>=3.6",
+]
+
 [dependency-groups]
 dev = ["pytest>=8"]
 
