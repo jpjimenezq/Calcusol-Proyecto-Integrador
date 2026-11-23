@@ -1,5 +1,5 @@
 {
-  "Comment": "Pipeline Calcusol: preparar estaciones, ingesta NASA, silver, gold y validacion",
+  "Comment": "Pipeline Calcusol: preparar estaciones, ingesta NASA, silver, gold, validacion y reentrenamiento del modelo (v1, v2... con promocion controlada)",
   "StartAt": "PrepararEstaciones",
   "States": {
     "PrepararEstaciones": {
@@ -156,7 +156,7 @@
           "Next": "Notificar"
         }
       ],
-      "End": true
+      "Next": "ReentrenarModelo"
     },
     "Notificar": {
       "Type": "Task",
@@ -165,7 +165,63 @@
         "TopicArn": "arn:aws:sns:us-east-1:607581913067:calcusol-alertas",
         "Message": "Fallo el pipeline Calcusol. Revisa la ejecucion en Step Functions."
       },
+      "Next": "Fallo"
+    },
+    "ReentrenarModelo": {
+      "Comment": "Entrena un candidato, lo evalua contra el modelo activo y lo promueve solo si cumple los criterios. Un candidato rechazado NO es un error.",
+      "Type": "Task",
+      "Resource": "arn:aws:states:::ecs:runTask.sync",
+      "TimeoutSeconds": 5400,
+      "Parameters": {
+        "LaunchType": "FARGATE",
+        "Cluster": "arn:aws:ecs:us-east-1:607581913067:cluster/default",
+        "TaskDefinition": "calcusol-entrenamiento",
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "Subnets": [
+              "subnet-0ce56a39462cc908e",
+              "subnet-0d384ac5254f9a4a0"
+            ],
+            "SecurityGroups": [
+              "sg-06f49e667abdbb720"
+            ],
+            "AssignPublicIp": "ENABLED"
+          }
+        },
+        "Overrides": {
+          "ContainerOverrides": [
+            {
+              "Name": "entrenamiento",
+              "Command": [
+                "--auto-promover"
+              ]
+            }
+          ]
+        }
+      },
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "Notificar"
+        }
+      ],
+      "Next": "NotificarExito"
+    },
+    "NotificarExito": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:607581913067:calcusol-alertas",
+        "Message.$": "States.Format('Pipeline Calcusol terminado ({}). Resultado del reentrenamiento: s3://calcusol-datos-eafit/modelos/radiacion/runs/ y modelo activo en s3://calcusol-datos-eafit/modelos/radiacion/active/manifest.json', $$.Execution.Name)"
+      },
       "End": true
+    },
+    "Fallo": {
+      "Type": "Fail",
+      "Error": "PipelineCalcusolFallo",
+      "Cause": "Un paso del pipeline fallo; se envio la alerta a calcusol-alertas."
     }
   }
 }

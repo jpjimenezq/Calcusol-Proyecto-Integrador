@@ -14,6 +14,7 @@ las dependencias del proyecto, boto3 y pyarrow. Desde la raíz del repositorio:
     python dashboard/pipeline/build_data_aws.py                       # incluye los datos preliminares del IDEAM
     python dashboard/pipeline/build_data_aws.py --solo-validados      # solo los validados (menos estaciones)
     python dashboard/pipeline/build_data_aws.py --validacion 2021 2022
+    python dashboard/pipeline/build_data_aws.py --registro s3://calcusol-datos-eafit/modelos   # con el modelo activo
 
 Los datos marcados EsPreliminar son mediciones que el IDEAM aún no ha validado. Se incluyen para cubrir todo el país
 (11 estaciones, entre ellas Villeta y la única de Chocó, solo tienen datos preliminares); cada estación guarda en
@@ -22,6 +23,7 @@ Los datos marcados EsPreliminar son mediciones que el IDEAM aún no ha validado.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import tempfile
 import time
@@ -35,6 +37,7 @@ import formato
 REPO = formato.ROOT.parent
 sys.path.insert(0, str(REPO / "src"))
 
+from calcusol.ml.activo import cargar_activo  # noqa: E402
 from calcusol.ml.predict import CorrectorRadiacion  # noqa: E402
 
 MODELO = REPO / "models" / "radiacion" / "v1" / "modelo_lgbm.txt"
@@ -85,12 +88,19 @@ def descargar(sesion, bucket: str, prefijo: str, carpeta: Path) -> int:
     return n
 
 
-def cargar_modelo() -> CorrectorRadiacion:
-    """LightGBM no lee el modelo si trae saltos de línea de Windows (\\r\\n): se usa una copia con \\n."""
+def cargar_modelo(registro: str | None = None) -> tuple[CorrectorRadiacion, dict]:
+    """
+    Modelo con el que se calculan los datos del dashboard. Con `registro` (p. ej. s3://calcusol-datos-eafit/modelos)
+    se usa el modelo ACTIVO del manifiesto, el mismo que sirve la API; sin él (o si falla), el de models/radiacion/v1.
+    LightGBM no lee el modelo si trae saltos de línea de Windows (\\r\\n): se usa una copia con \\n.
+    """
     with tempfile.TemporaryDirectory() as tmp:
-        copia = Path(tmp) / "modelo_lgbm.txt"
-        copia.write_bytes(MODELO.read_bytes().replace(b"\r\n", b"\n"))
-        return CorrectorRadiacion(str(copia))
+        carpeta = Path(tmp) / "v1"
+        carpeta.mkdir()
+        (carpeta / "modelo_lgbm.txt").write_bytes(MODELO.read_bytes().replace(b"\r\n", b"\n"))
+        if (MODELO.parent / "metadatos.json").exists():
+            (carpeta / "metadatos.json").write_bytes((MODELO.parent / "metadatos.json").read_bytes())
+        return cargar_activo(str(carpeta / "modelo_lgbm.txt"), registro)
 
 
 def main() -> None:
@@ -101,11 +111,15 @@ def main() -> None:
     ap.add_argument("--solo-validados", action="store_true",
                     help="excluye las filas marcadas EsPreliminar (por defecto se incluyen, y cada estación "
                          "guarda qué proporción de sus datos es preliminar)")
+    ap.add_argument("--registro", default=None, metavar="RAIZ",
+                    help="registro de modelos (p. ej. s3://calcusol-datos-eafit/modelos): usa el modelo activo "
+                         "del manifiesto, el mismo que sirve la API (por defecto, models/radiacion/v1)")
     ap.add_argument("--validacion", nargs=2, type=int, default=[2021, 2022], metavar=("DESDE", "HASTA"),
                     help="años con los que se mide el error del modelo (los que no vio al entrenar)")
     a = ap.parse_args()
 
     import boto3  # solo hace falta con AWS
+    os.environ.setdefault("AWS_PROFILE", a.perfil)                    # s3fs (registro de modelos) usa el mismo perfil
     sesion = boto3.Session(profile_name=a.perfil, region_name=a.region)
     ahora = datetime.now().strftime("%Y%m%d%H%M%S")
     prefijo = f"athena/dashboard/{ahora}/"
@@ -125,7 +139,12 @@ def main() -> None:
     # El cálculo usa las horas con sol: se descartan las de la madrugada y la noche (6 y 19 h casi no tienen) y,
     # dentro del modelo, las filas con el sol bajo el horizonte.
     df = df[df["Hora"].between(formato.HORAS[0], formato.HORAS[-1])]
-    d = cargar_modelo().predecir(df)                                   # radiacion_corregida (W/m2), solo horas de sol
+    corrector, info_modelo = cargar_modelo(a.registro)
+    print(f"Modelo: {info_modelo['version']} ({info_modelo['origen']})", flush=True)
+    if a.registro and info_modelo["origen"] != "registro":           # no mezclar: o el activo del registro, o error
+        raise SystemExit(f"No se pudo leer el modelo activo de {a.registro} ({info_modelo.get('motivo_respaldo')}); "
+                         "no se generan datos con otro modelo.")
+    d = corrector.predecir(df)                                         # radiacion_corregida (W/m2), solo horas de sol
     d = d.rename(columns={"Valor": "IDEAM", "ALLSKY_SFC_SW_DWN": "NASA", "radiacion_corregida": "ML"})
 
     deptos = formato.departamentos()
@@ -141,7 +160,7 @@ def main() -> None:
         "desde": int(d["Anio"].min()), "hasta": int(d["Anio"].max()),
         "sesgo_nasa": round(float(v["NASA"].sum() / v["IDEAM"].sum() - 1), 4),
         "rmse_nasa": formato.rmse(v["NASA"], v["IDEAM"]), "rmse_ml": formato.rmse(v["ML"], v["IDEAM"]),
-        "modelo": "LightGBM (R1)", "fuente": "Athena calcusol.gold_v1",
+        "modelo": f"LightGBM (R1) {info_modelo['version']}", "fuente": "Athena calcusol.gold_v1",
         "validacion": f"{a.validacion[0]}–{a.validacion[1]}", "preliminares": preliminares,
     }
     salida = formato.armar_salida(estaciones, deptos, meta)

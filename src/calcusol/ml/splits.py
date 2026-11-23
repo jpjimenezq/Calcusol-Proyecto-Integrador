@@ -21,6 +21,8 @@ entrenamiento. Lee el Gold local (data/gold/dataset) por defecto.
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 import numpy as np
 import pandas as pd
 
@@ -34,9 +36,33 @@ HOLDOUT_FRAC = 0.2
 MAX_WM2 = 1500
 
 
+@lru_cache(maxsize=2)
+def _leer_parquet(ruta: str) -> pd.DataFrame:
+    """
+    Lee un dataset parquet (con particiones Anio=YYYY). En s3:// pasa por s3fs/fsspec: así
+    solo hace falta ListBucket + GetObject sobre los archivos (pyarrow nativo exige HeadObject
+    sobre la carpeta y falla con permisos mínimos).
+    La lectura se guarda en memoria: los exámenes de R2 piden el mismo Gold varias veces.
+    Quien use el resultado no debe modificarlo en sitio (cargar_gold ya trabaja sobre copias).
+    """
+    if "://" not in ruta:
+        return pd.read_parquet(ruta)
+    import fsspec
+    import pyarrow.dataset as ds
+
+    ruta = "s3://" + ruta[len("s3a://"):] if ruta.startswith("s3a://") else ruta
+    fs, base = fsspec.core.url_to_fs(ruta)
+    archivos = sorted(p for p in fs.find(base) if p.endswith(".parquet"))
+    if not archivos:
+        raise FileNotFoundError(f"No hay archivos parquet en {ruta}")
+    dataset = ds.dataset(archivos, filesystem=fs, format="parquet", partition_base_dir=base,
+                         partitioning=ds.partitioning(flavor="hive"))
+    return dataset.to_table().to_pandas()
+
+
 def cargar_gold(ruta: str | None = None) -> pd.DataFrame:
     """Lee el Gold, excluye preliminares, limpieza física, añade ts/year."""
-    df = pd.read_parquet(ruta or DATASET)
+    df = _leer_parquet(ruta or DATASET)
     if "anio" in df.columns:
         df = df.rename(columns={"anio": "Anio"})
     df = df[~df["EsPreliminar"]].copy()                     # solo definitivos

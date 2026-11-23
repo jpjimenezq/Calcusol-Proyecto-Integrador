@@ -1,0 +1,11 @@
+# Dependencias de la imagen de entrenamiento (solo lo que usan ml/train, ml/evaluate y ml/promocion).
+# Sin pyspark ni Java. Las versiones reales quedan registradas en metadatos.json de cada modelo.
+numpy>=2.0
+pandas>=2.2
+pyarrow>=16
+scipy>=1.13
+scikit-learn>=1.5
+lightgbm>=4.5
+pvlib>=0.16.1
+fsspec>=2024.6
+s3fs>=2024.6

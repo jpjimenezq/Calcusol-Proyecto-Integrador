@@ -211,44 +211,9 @@
       }
     } catch (e) {
       console.error(e);
-      mensajeUbic('No se pudo consultar el buscador de direcciones. Prueba con las coordenadas o con «Usar mi ubicación».', true);
+      mensajeUbic('No se pudo consultar el buscador de direcciones. Prueba con las coordenadas o haz clic en el mapa.', true);
     }
   }
-  /* Ubicación del navegador: pide permiso; las coordenadas no salen de este equipo (a la API solo llegan redondeadas a ~1 km). */
-  function usarMiUbicacion() {
-    const aviso = 'También puedes usar «Ubicarme por mi conexión», escribir la dirección o las coordenadas, o hacer clic en el mapa.';
-    if (!navigator.geolocation) { $('btn-conexion').hidden = false; return mensajeUbic(`Este navegador no permite obtener la ubicación. ${aviso}`, true); }
-    mensajeUbic('Esperando el permiso del navegador…');
-    navigator.geolocation.getCurrentPosition(
-      (pos) => { $('btn-conexion').hidden = true; ubicarHogar(pos.coords.latitude, pos.coords.longitude, `Tu ubicación (±${n0(pos.coords.accuracy)} m)`); },
-      (err) => {
-        console.warn('Geolocalización:', err.code, err.message);
-        // Si el navegador no puede o tarda (ubicación del equipo apagada, sin señal), se usa sola la aproximada por la conexión.
-        if (err.code === 2 || err.code === 3) return ubicarPorConexion('Tu navegador no pudo darme tu ubicación exacta; ');
-        $('btn-conexion').hidden = false;      // con el permiso denegado se respeta y solo se ofrece el botón
-        mensajeUbic(err.code === 1
-          ? `El navegador no te dejó usar tu ubicación (permiso denegado). Para activarla, haz clic en el candado junto a la dirección de la página, elige Ubicación → Permitir y vuelve a pulsar el botón. ${aviso}`
-          : `No se pudo obtener tu ubicación. ${aviso}`, true);
-      },
-      { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 });
-  }
-  /* Respaldo: ubicación aproximada (ciudad) por la conexión a internet. Solo si la persona lo pide: la dirección IP
-   * se envía a un servicio público de geolocalización por IP (geojs.io; si falla, ipwho.is). */
-  async function ubicarPorConexion(prefijo = '') {
-    mensajeUbic(prefijo ? `${prefijo}buscando tu ubicación aproximada por la conexión…` : 'Buscando tu ubicación aproximada por la conexión…');
-    const fuentes = [
-      async () => { const j = await (await fetch('https://get.geojs.io/v1/ip/geo.json')).json(); return { lat: +j.latitude, lon: +j.longitude, lugar: j.city }; },
-      async () => { const j = await (await fetch('https://ipwho.is/')).json(); if (!j.success) throw new Error('ipwho.is sin resultado'); return { lat: +j.latitude, lon: +j.longitude, lugar: j.city }; },
-    ];
-    for (const consultar of fuentes) {
-      try {
-        const r = await consultar();
-        if (Number.isFinite(r.lat) && Number.isFinite(r.lon)) return ubicarHogar(r.lat, r.lon, `Aproximado por tu conexión${r.lugar ? ` (${r.lugar})` : ''}: puede estar a varios km`);
-      } catch (e) { console.warn('Ubicación por conexión:', e); }
-    }
-    return mensajeUbic('No se pudo ubicarte por la conexión. Escribe la dirección o las coordenadas, o haz clic en el mapa.', true);
-  }
-
   /* ---------- Controles ---------- */
   function montarControles() {
     const deptos = deptosConEstacion();
@@ -289,9 +254,6 @@
     $('f-tarifa-plena').addEventListener('change', (e) => { st.sup.tarifaPlena = acotar(+e.target.value, 50, 3000, tarifasDe(st.estrato).plena); render(); });
     $('btn-buscar').addEventListener('click', buscar);
     $('f-ubicacion').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); buscar(); } });
-    $('btn-gps').addEventListener('click', usarMiUbicacion);
-    $('btn-conexion').addEventListener('click', () => ubicarPorConexion());
-    if (!navigator.geolocation) $('btn-conexion').hidden = false;
     $('btn-reset').addEventListener('click', () => {
       const { estacion, departamento, punto, consumo, estrato, perfil, mes, escenario } = st;
       st = { ...inicial(), estacion, departamento, punto, consumo, estrato, perfil, mes, escenario };

@@ -15,7 +15,16 @@ dependencies = [
     "joblib>=1.4",
     "pyyaml>=6.0",
     "openpyxl>=3.1",        # leer y escribir Excel (evaluación R2 y R3)
+    "fsspec>=2024.6",       # registro de modelos: misma lógica en local y S3
+    "s3fs>=2024.6",         # lectura/escritura en s3:// (Gold y modelos)
 ]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
 
 [build-system]
 requires = ["hatchling"]
