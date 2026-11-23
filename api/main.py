@@ -9,6 +9,7 @@ Aquí solo se valida la entrada y se devuelve la salida.
 import math
 import os
 from datetime import datetime
+from functools import lru_cache
 
 import numpy as np
 import pandas as pd
@@ -170,6 +171,22 @@ class SimulacionEntrada(BaseModel):
     ubicacion: Ubicacion
     serie: SerieSolar
     sistema: Sistema = Field(default_factory=Sistema)
+
+
+class PuntoEntrada(BaseModel):
+    """Parámetros equivalentes al bloque 'Lugar nuevo' del notebook R3."""
+    latitud: float = Field(default=2.19, ge=-5, le=14)
+    longitud: float = Field(default=-75.63, ge=-82, le=-66)
+    anios: list[int] = Field(default=[2023, 2024, 2025], min_length=1, max_length=20)
+    estrato: int = Field(default=3, ge=1, le=6)
+    kwh_mes: float = Field(default=157, gt=0)
+    kwp: float = Field(default=1.5, gt=0)
+    costo_kwp_cop: float = Field(default=5000000, gt=0)
+    inclinacion_grados: float = Field(default=10, ge=0, le=90)
+    azimut_grados: float = Field(default=180, ge=0, le=360)
+    factor_tarifa: float = Field(default=1.0, gt=0)
+    precio_excedente_cop: float = Field(default=331, ge=0)
+    tasa_descuento: float = Field(default=0.09, gt=0, lt=1)
 
 
 def _limpio(d: dict) -> dict:
@@ -375,3 +392,67 @@ def simulacion(e: SimulacionEntrada):
         estrato=s.estrato, kwp=s.kwp, costo_kwp=s.costo_kwp_cop, kwh_mes=s.kwh_mes,
         f_tarifa=_factor_tarifa(s), precio_exc2=s.precio_excedente_cop, tasa=s.tasa_descuento)
     return _con_avisos(_limpio(res), len(e.serie.fechas))
+
+
+@app.post("/v1/punto")
+def calcular_punto_nasa(e: PuntoEntrada):
+    """Descarga NASA, corrige con LightGBM y arma el año típico de 8.760 horas.
+
+    Esta ruta reproduce el bloque 'Lugar nuevo' del notebook R3.
+    """
+    try:
+        res = r3.calcular_punto(
+            e.latitud,
+            e.longitud,
+            CFG,
+            estrato=e.estrato,
+            kwh_mes=e.kwh_mes,
+            kwp=e.kwp,
+            costo_kwp=e.costo_kwp_cop,
+            anios=e.anios,
+            f_tarifa=e.factor_tarifa,
+            precio_exc2=e.precio_excedente_cop,
+            tasa=e.tasa_descuento,
+            inclinacion=e.inclinacion_grados,
+            azimut=e.azimut_grados,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"No se pudo calcular el punto: {exc}") from exc
+
+    return [_limpio(row) for row in res.to_dict(orient="records")]
+
+
+class CasosEntrada(BaseModel):
+    """Mismos parámetros del hogar y del sistema que /v1/punto, pero sin lugar ni años."""
+    estrato: int = Field(default=3, ge=1, le=6)
+    kwh_mes: float = Field(default=157, gt=0)
+    kwp: float = Field(default=1.5, gt=0)
+    costo_kwp_cop: float = Field(default=5000000, gt=0)
+    inclinacion_grados: float = Field(default=10, ge=0, le=90)
+    azimut_grados: float = Field(default=180, ge=0, le=360)
+    factor_tarifa: float = Field(default=1.0, gt=0)
+    precio_excedente_cop: float = Field(default=331, ge=0)
+    tasa_descuento: float = Field(default=0.09, gt=0, lt=1)
+
+
+@lru_cache(maxsize=1)
+def _casos_r2():
+    """Serie horaria y casos del Excel de evaluación de R2 (se leen una sola vez)."""
+    df = r3.cargar_serie_r2(CFG)
+    return df, r3.cargar_casos_r2(CFG, df)
+
+
+@app.post("/v1/casos")
+def calcular_casos(e: CasosEntrada):
+    """Los 3 lugares del notebook R3 (mayor mejora, mediana y menor mejora), cada uno con el sol del IDEAM,
+    de NASA y del modelo (fuera de pliegue). Es el bloque 'Tus valores para los 3 lugares' del notebook:
+    mismos datos, así que los números coinciden con r3_mis_valores_3_lugares.csv."""
+    try:
+        df, casos = _casos_r2()
+        res = r3.correr_casos(df, casos, CFG, inclinacion=e.inclinacion_grados, azimut=e.azimut_grados,
+                              estrato=e.estrato, kwh_mes=e.kwh_mes, kwp=e.kwp, costo_kwp=e.costo_kwp_cop,
+                              f_tarifa=e.factor_tarifa, precio_exc2=e.precio_excedente_cop, tasa=e.tasa_descuento)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudieron calcular los casos: {exc}") from exc
+    res["estrato"], res["kWp"] = e.estrato, e.kwp
+    return [_limpio(row) for row in res.to_dict(orient="records")]

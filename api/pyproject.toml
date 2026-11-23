@@ -11,6 +11,7 @@ dependencies = [
     "numpy==2.4.6",
     "pyyaml==6.0.3",
     "joblib==1.6.0",
+    "openpyxl>=3.1",   # leer el Excel de evaluación (casos de R3)
     # Solo para servir la API
     "fastapi>=0.115,<1",
     "uvicorn>=0.32,<1",
