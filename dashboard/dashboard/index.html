@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Calcusol · Paneles solares en Antioquia</title>
+  <meta name="description" content="Dashboard de viabilidad de sistemas solares fotovoltaicos para hogares de Antioquia, con radiación satelital corregida.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="portada">
+    <div class="ancho portada-in">
+      <svg class="sol" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2" fill="currentColor"/><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></g></svg>
+      <div>
+        <h1>¿Vale la pena instalar paneles solares en Antioquia?</h1>
+        <p>Equipo Calcusol · <span id="meta-datos">Cargando datos…</span></p>
+      </div>
+    </div>
+  </header>
+
+  <main class="ancho disposicion">
+    <form class="filtros" id="filtros" aria-label="Datos del hogar" onsubmit="return false">
+      <label class="campo campo-ancho">Estación más cercana
+        <select id="f-estacion"></select>
+      </label>
+      <label class="campo">Consumo (kWh/mes)
+        <input id="f-consumo" type="number" min="30" max="3000" step="10" inputmode="numeric">
+      </label>
+      <label class="campo">Estrato
+        <select id="f-estrato"></select>
+      </label>
+      <label class="campo">Tarifa del operador ($/kWh)
+        <input id="f-tarifa" type="number" min="100" max="3000" step="10" inputmode="numeric">
+      </label>
+      <label class="campo campo-ancho">Perfil de consumo
+        <select id="f-perfil"></select>
+      </label>
+      <label class="campo">Mes
+        <select id="f-mes"></select>
+      </label>
+      <div class="campo campo-ancho">
+        <span id="lbl-escenario">Tamaño del sistema</span>
+        <div class="segmentos" id="f-escenario" role="group" aria-labelledby="lbl-escenario"></div>
+      </div>
+
+      <details class="supuestos">
+        <summary>Supuestos técnicos y financieros</summary>
+        <div class="supuestos-grid" id="supuestos-grid"></div>
+        <button type="button" class="boton" id="btn-reset">Restablecer valores de referencia</button>
+      </details>
+    </form>
+
+    <div class="contenido">
+    <section class="bloque" aria-labelledby="t-respuesta">
+      <h2 id="t-respuesta" aria-live="polite"></h2>
+      <div class="inicio">
+        <figure class="panel">
+          <figcaption class="fila"><strong id="t-mapa"></strong><span class="pista" id="pista-mapa"></span></figcaption>
+          <div class="grafico" id="g-mapa"></div>
+        </figure>
+        <div class="kpis" id="kpis"></div>
+      </div>
+    </section>
+
+    <section class="bloque" aria-labelledby="t-energia">
+      <div class="cabecera">
+        <span class="antetitulo">Energía y autoconsumo</span>
+      </div>
+      <h2 id="t-energia"></h2>
+      <div class="paneles">
+        <figure class="panel">
+          <figcaption><strong>Energía por mes</strong></figcaption>
+          <div class="leyenda" id="ley-mensual"></div>
+          <div class="grafico" id="g-mensual"></div>
+        </figure>
+        <figure class="panel">
+          <figcaption><strong id="t-balance"></strong></figcaption>
+          <div class="leyenda" id="ley-balance"></div>
+          <div class="grafico" id="g-balance"></div>
+        </figure>
+      </div>
+      <div class="tarjetas" id="tar-energia"></div>
+    </section>
+
+    <section class="bloque" aria-labelledby="t-rentabilidad">
+      <div class="cabecera">
+        <span class="antetitulo">Rentabilidad</span>
+      </div>
+      <h2 id="t-rentabilidad"></h2>
+      <div class="escenarios" id="escenarios"></div>
+      <div class="paneles">
+        <figure class="panel">
+          <figcaption><strong>Años de recuperación</strong></figcaption>
+          <div class="leyenda" id="ley-payback"></div>
+          <div class="grafico" id="g-payback"></div>
+        </figure>
+        <figure class="panel">
+          <figcaption><strong>Flujo de caja acumulado</strong></figcaption>
+          <div class="leyenda" id="ley-flujo"></div>
+          <div class="grafico" id="g-flujo"></div>
+        </figure>
+      </div>
+      <details class="tabla-datos">
+        <summary>Tabla comparativa</summary>
+        <div class="tabla-scroll"><table id="tabla"></table></div>
+      </details>
+    </section>
+
+    <details class="notas"><summary>Notas y supuestos</summary><div id="notas"></div></details>
+    </div>
+  </main>
+
+  <div class="tip" id="tip" role="status" hidden></div>
+
+  <script src="js/model.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
