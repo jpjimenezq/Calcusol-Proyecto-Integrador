@@ -1,0 +1,31 @@
+{
+  "family": "calcusol-entrenamiento",
+  "requiresCompatibilities": ["FARGATE"],
+  "networkMode": "awsvpc",
+  "cpu": "4096",
+  "memory": "16384",
+  "runtimePlatform": {"cpuArchitecture": "X86_64", "operatingSystemFamily": "LINUX"},
+  "executionRoleArn": "arn:aws:iam::607581913067:role/calcusol-ecs-task-execution",
+  "taskRoleArn": "arn:aws:iam::607581913067:role/calcusol-entrenamiento-tarea",
+  "ephemeralStorage": {"sizeInGiB": 30},
+  "containerDefinitions": [
+    {
+      "name": "entrenamiento",
+      "image": "607581913067.dkr.ecr.us-east-1.amazonaws.com/calcusol-entrenamiento:IMAGEN_TAG",
+      "essential": true,
+      "environment": [
+        {"name": "CALCUSOL_GOLD_RUTA", "value": "s3://calcusol-datos-eafit/gold/dataset"},
+        {"name": "CALCUSOL_MODELOS_ROOT", "value": "s3://calcusol-datos-eafit/modelos"},
+        {"name": "AWS_DEFAULT_REGION", "value": "us-east-1"}
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/calcusol/entrenamiento",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+# Imagen del reentrenamiento del modelo de radiación (ECS Fargate). Construir desde la RAÍZ del repositorio:
+#   docker build -f infra/mlops/Dockerfile.entrenamiento --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) -t calcusol-entrenamiento .
+FROM python:3.11-slim
+
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+
+# LightGBM necesita OpenMP (libgomp)
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY infra/mlops/requirements-entrenamiento.txt .
+RUN pip install --no-cache-dir -r requirements-entrenamiento.txt
+
+# Mismo código que usan el repositorio local y la API (fuente único: src/calcusol)
+COPY src/calcusol /app/src/calcusol
+
+ARG GIT_COMMIT=desconocido
+ENV GIT_COMMIT=${GIT_COMMIT}
+ENV PYTHONPATH=/app/src
+
+# Variables que fija la definición de tarea (ver infra/mlops/tarea_entrenamiento.json)
+ENV CALCUSOL_GOLD_RUTA=s3://calcusol-datos-eafit/gold/dataset
+ENV CALCUSOL_MODELOS_ROOT=s3://calcusol-datos-eafit/modelos
+
+ENTRYPOINT ["python", "-m", "calcusol.ml.reentrenar"]
+CMD ["--auto-promover"]
