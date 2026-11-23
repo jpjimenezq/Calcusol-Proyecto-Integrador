@@ -83,10 +83,18 @@ def nombre_limpio(nombre: str) -> str:
         "Santa Barbara", "Santa Bárbara").replace("Cotove", "Cotové")
 
 
-def matriz(df: pd.DataFrame, col: str) -> list[list[float]]:
-    """Promedio [mes 1-12][hora 7-18] de una columna. Una celda sin datos toma el promedio de su mes."""
+def matriz(df: pd.DataFrame, col: str, radiacion: bool = True) -> list[list[float]]:
+    """Promedio [mes 1-12][hora 7-18] de una columna.
+
+    Una celda sin datos NO se rellena con el promedio del mes (eso inventaba radiación de pleno día a las 18 h, cuando casi
+    no hay sol y las filas con el sol bajo el horizonte se descartan). En la radiación, una celda vacía entre horas con
+    datos se interpola y una vacía en los extremos (amanecer o atardecer) vale 0. En la temperatura, que no se anula de
+    noche, toma la de la hora más cercana (y, si el mes no tiene datos, el promedio de la estación)."""
     t = df.pivot_table(index="Mes", columns="Hora", values=col, aggfunc="mean").reindex(index=range(1, 13), columns=HORAS)
-    t = t.apply(lambda fila: fila.fillna(fila.mean() if fila.notna().any() else 0.0), axis=1)
+    if radiacion:
+        t = t.interpolate(axis=1, limit_area="inside").fillna(0.0)
+    else:
+        t = t.ffill(axis=1).bfill(axis=1).fillna(float(df[col].mean()))
     return [[round(float(v), 1) for v in fila] for fila in t.values]
 
 
@@ -125,7 +133,7 @@ def estaciones_desde(df: pd.DataFrame, deptos: list[dict], validacion: tuple[int
             "sesgo_ml": round(float(v["ML"].sum() / v["IDEAM"].sum() - 1), 4),
             "rmse_nasa": rmse(v["NASA"], v["IDEAM"]),
             "rmse_ml": rmse(v["ML"], v["IDEAM"]),
-            "clim": {k: matriz(g, c) for k, c in (("ideam", "IDEAM"), ("nasa", "NASA"), ("ml", "ML"), ("t2m", "T2M"))},
+            "clim": {k: matriz(g, c, radiacion=(k != "t2m")) for k, c in (("ideam", "IDEAM"), ("nasa", "NASA"), ("ml", "ML"), ("t2m", "T2M"))},
         })
     return salida
 
