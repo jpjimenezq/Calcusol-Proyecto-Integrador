@@ -31,7 +31,7 @@ ANIO_REF = 2021  # año no bisiesto: 8,760 horas
 
 
 # ---------------------------------------------------------------- utilidades
-def cargar_config(ruta="config_r3.yaml") -> dict:
+def cargar_config(ruta="config/config_r3.yaml") -> dict:
     with open(ruta, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
@@ -660,7 +660,7 @@ def resumen_legible(res: pd.DataFrame) -> pd.DataFrame:
     return t
 
 
-def main(ruta_config="config_r3.yaml"):
+def main(ruta_config="config/config_r3.yaml"):
     cfg = cargar_config(ruta_config)
     out = Path(cfg["datos"]["carpeta_resultados"]); out.mkdir(exist_ok=True)
     if usa_entrega_r2(cfg):                       # predicciones ya hechas por R2
