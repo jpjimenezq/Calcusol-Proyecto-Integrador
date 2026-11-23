@@ -125,22 +125,24 @@ def columnas_modelo(modelo) -> list:
     return list(modelo.get_booster().feature_names)
 
 
-def predecir_modelo(df: pd.DataFrame, cfg) -> pd.DataFrame:
+def predecir_modelo(df: pd.DataFrame, cfg, corrector=None) -> pd.DataFrame:
     """Agrega la columna 'Prediccion' (radiación corregida, recortada a 0..1400, D3).
     El LightGBM final predice la DIFERENCIA con la NASA (IDEAM - NASA), así que
     Prediccion = NASA + lo que dice el modelo (config: modelo_predice).
-    Si las predicciones ya vienen hechas, basta con que traigan esa columna."""
+    Si las predicciones ya vienen hechas, basta con que traigan esa columna.
+    'corrector' (un CorrectorRadiacion ya cargado) permite usar el mismo modelo que sirve /predict,
+    por ejemplo el que indica el registro de versiones, en vez de abrir el archivo de la ficha."""
     if "Prediccion" in df.columns:
         return df
     d = cfg["datos"]
-    if str(d["modelo"]).lower().endswith(".txt"):
+    if corrector is not None or str(d["modelo"]).lower().endswith(".txt"):
         # Modelo nativo de R1 (el mismo de /predict): se usa su propio código de variables y de
         # corrección (NASA + residuo, >= 0), para que R3 y /predict den la misma radiación.
         from calcusol.ml.predict import CorrectorRadiacion
         base = df.copy()
         if "CodigoEstacion" not in base.columns:
             base["CodigoEstacion"] = 0
-        out = CorrectorRadiacion(d["modelo"]).predecir(base)
+        out = (corrector or CorrectorRadiacion(d["modelo"])).predecir(base)
         out["Prediccion"] = np.clip(out.pop("radiacion_corregida"), 0, 1400)
         return out
     modelo = cargar_modelo(d["modelo"])
@@ -793,14 +795,15 @@ def calibrar_desfase_nasa(df_tabla: pd.DataFrame, codigo_estacion: int, anio: in
 def calcular_punto(lat: float, lon: float, cfg, estrato=None, kwh_mes=None, kwp=None,
                    costo_kwp=None, anios=None, datos_nasa: pd.DataFrame | None = None,
                    f_tarifa=1.0, precio_exc2=None, tasa=None,
-                   inclinacion=None, azimut=None) -> pd.DataFrame:
+                   inclinacion=None, azimut=None, corrector=None) -> pd.DataFrame:
     """Todo el flujo para un lugar de Colombia SIN estación del IDEAM:
     1) descarga NASA del punto -> 2) el modelo corrige -> 3) el motor calcula.
-    Devuelve el resultado con el sol del MODELO (el que se usaría) y con NASA (referencia)."""
+    Devuelve el resultado con el sol del MODELO (el que se usaría) y con NASA (referencia).
+    'corrector': modelo ya cargado (el activo de la API); sin él se abre el de la ficha."""
     anios = anios or cfg["datos"].get("anios_nasa_punto", [2023, 2024, 2025])
     cfg = cfg_con(cfg, inclinacion, azimut)
     d = datos_nasa if datos_nasa is not None else descargar_nasa_punto(lat, lon, anios, cfg)
-    d = predecir_modelo(d.drop(columns=["Prediccion"], errors="ignore"), cfg)
+    d = predecir_modelo(d.drop(columns=["Prediccion"], errors="ignore"), cfg, corrector)
     anio = anio_tipico(d)
     info = {"Latitud": lat, "Longitud": lon, "Altitud": float(d.Altitud.iloc[0])}
     filas = []

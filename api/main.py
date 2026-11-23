@@ -419,6 +419,7 @@ def calcular_punto_nasa(e: PuntoEntrada):
             tasa=e.tasa_descuento,
             inclinacion=e.inclinacion_grados,
             azimut=e.azimut_grados,
+            corrector=corrector,                 # el mismo modelo que sirve /predict (el activo del registro)
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"No se pudo calcular el punto: {exc}") from exc
