@@ -15,6 +15,15 @@ dependencies = [
     "joblib>=1.4",
     "pyyaml>=6.0",
     "openpyxl>=3.1",        # leer y escribir Excel (evaluación R2 y R3)
+    "fastapi>=0.115",
+    "uvicorn>=0.34",
+]
+
+[project.optional-dependencies]
+# Solo para ml/comparar_modelos.py y ml/buscar_hiperparametros.py (o notebooks/comparacion_modelos.ipynb)
+comparacion = [
+    "xgboost>=2.0",
+    "optuna>=3.6",
 ]
 
 [build-system]
