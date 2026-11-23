@@ -30,11 +30,6 @@
           <input id="f-ubicacion" type="search" placeholder="Dirección y ciudad, o coordenadas (4.65, -74.06)" autocomplete="off" enterkeyhint="search" aria-describedby="ubic-estado">
           <button type="button" class="boton" id="btn-buscar">Buscar</button>
         </div>
-        <button type="button" class="boton boton-gps" id="btn-gps">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2" fill="currentColor"/><circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-          Usar mi ubicación
-        </button>
-        <button type="button" class="boton boton-gps boton-conexion" id="btn-conexion" hidden>Ubicarme por mi conexión (aproximado)</button>
         <p class="ubic-estado" id="ubic-estado" role="status" aria-live="polite"></p>
         <ul class="ubic-resultados" id="ubic-resultados" hidden></ul>
         <p class="ubic-credito">En Colombia, OpenStreetMap suele ubicar la calle o el barrio, no el número de la casa. Para el punto exacto, haz clic en el mapa o escribe las coordenadas. Direcciones: © colaboradores de OpenStreetMap (Nominatim).</p>

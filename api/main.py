@@ -19,15 +19,17 @@ from pydantic import BaseModel, Field, model_validator
 
 from calcusol.fisica_finanzas import calcusol_r3 as r3
 from calcusol.ml import features as feat
-from calcusol.ml.predict import CorrectorRadiacion
+from calcusol.ml.activo import cargar_activo
 
+# Modelo embebido en la imagen (respaldo) y registro de versiones (S3). El modelo en servicio es el que dice
+# el manifiesto del registro; sin registro, sin manifiesto o ante cualquier fallo se usa el embebido.
 RUTA_MODELO = os.environ.get("MODELO_RUTA", "/app/models/radiacion/v1/modelo_lgbm.txt")
-corrector = CorrectorRadiacion(RUTA_MODELO)
-VERSION = "radiacion-v1 (LightGBM, variante A0, 17 features)"
+corrector, MODELO = cargar_activo(RUTA_MODELO, os.environ.get("CALCUSOL_MODELOS_ROOT"))
+VERSION = f"radiacion-{MODELO['version']} (LightGBM, variante A0, 17 features)"
 
 CFG = r3.cargar_config()  # ficha de supuestos empaquetada con calcusol
 
-app = FastAPI(title="Calcusol · API", version="1.2.0")
+app = FastAPI(title="Calcusol · API", version="1.3.0")
 
 # El dashboard se sirve desde otro puerto (por ejemplo http://localhost:8080): sin CORS el navegador
 # bloquea sus llamadas. Por defecto se permite cualquier puerto de localhost; para otros
@@ -63,7 +65,9 @@ class Salida(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"estado": "ok", "modelo": VERSION}
+    return {"estado": "ok", "modelo": VERSION, "modelo_version": MODELO["version"], "modelo_origen": MODELO["origen"],
+            "modelo_sha256": MODELO["sha256"], "gold_version": MODELO["gold_version"],
+            "promovido": MODELO["promoted_at"]}
 
 
 @app.post("/predict", response_model=Salida)
