@@ -18,6 +18,7 @@ Todos los números salen de config_r3.yaml; aquí no hay valores escritos a mano
 from __future__ import annotations
 
 import copy
+import os
 from pathlib import Path
 
 import joblib
@@ -32,13 +33,22 @@ ANIO_REF = 2021  # año no bisiesto: 8,760 horas
 
 # ---------------------------------------------------------------- utilidades
 RUTA_CONFIG_DEFECTO = Path(__file__).parent / "config" / "config_r3.yaml"
+RAIZ_PROYECTO = Path(__file__).resolve().parents[3]   # repo: <raíz>/src/calcusol/fisica_finanzas; imagen: /app
+RUTAS_DATOS = ("tabla_gold", "modelo", "casos_r2", "predicciones_r2", "tabla_mejora_r2")
 
 
 def cargar_config(ruta=None) -> dict:
     """Lee la ficha de supuestos. Sin ruta, usa la que viene con el paquete
     (no depende de dónde se ejecute el programa)."""
     with open(ruta or RUTA_CONFIG_DEFECTO, encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        cfg = yaml.safe_load(f)
+    d = cfg.get("datos", {})
+    if os.environ.get("MODELO_RUTA"):               # misma variable que usa la API en /predict
+        d["modelo"] = os.environ["MODELO_RUTA"]
+    for k in RUTAS_DATOS:                           # rutas relativas -> desde la raíz del proyecto
+        if d.get(k) and not Path(d[k]).is_absolute() and not Path(d[k]).exists():
+            d[k] = str(RAIZ_PROYECTO / d[k])
+    return cfg
 
 
 def v(cfg_item):
@@ -102,6 +112,9 @@ def cargar_modelo(ruta: str):
         m = xgb.XGBRegressor()
         m.load_model(ruta)
         return m
+    if str(ruta).lower().endswith(".txt"):          # formato nativo de R1: se abre como regresor, sin .joblib
+        from calcusol.ml.modelo import cargar_regresor
+        return cargar_regresor(ruta)
     return joblib.load(ruta)
 
 
@@ -120,6 +133,16 @@ def predecir_modelo(df: pd.DataFrame, cfg) -> pd.DataFrame:
     if "Prediccion" in df.columns:
         return df
     d = cfg["datos"]
+    if str(d["modelo"]).lower().endswith(".txt"):
+        # Modelo nativo de R1 (el mismo de /predict): se usa su propio código de variables y de
+        # corrección (NASA + residuo, >= 0), para que R3 y /predict den la misma radiación.
+        from calcusol.ml.predict import CorrectorRadiacion
+        base = df.copy()
+        if "CodigoEstacion" not in base.columns:
+            base["CodigoEstacion"] = 0
+        out = CorrectorRadiacion(d["modelo"]).predecir(base)
+        out["Prediccion"] = np.clip(out.pop("radiacion_corregida"), 0, 1400)
+        return out
     modelo = cargar_modelo(d["modelo"])
     X = variables_modelo(df, columnas_modelo(modelo), d.get("desfase_variables_sol_min", 30))
     pred = modelo.predict(X)
@@ -231,11 +254,32 @@ def usa_excel_casos(cfg) -> bool:
     return bool(cfg["datos"].get("casos_r2")) and not usa_entrega_r2(cfg)
 
 
+def _nombre_hoja(ruta, nombre: str) -> str | None:
+    """El Excel de evaluación (validacion/evaluar_modelo.py) guarda las hojas de R3 con el prefijo
+    'R3_' (R3_mejora_por_sitio, R3_serie_horaria, R3_casos). Se aceptan con y sin prefijo."""
+    hojas = pd.ExcelFile(ruta).sheet_names
+    return next((h for h in (nombre, f"R3_{nombre}") if h in hojas), None)
+
+
+def _leer_hoja(ruta, nombre: str, columna_clave: str) -> pd.DataFrame:
+    """Lee una hoja del Excel de R2. La tabla no empieza en la fila 1 (arriba hay una nota),
+    así que el encabezado se busca: es la primera fila que contiene 'columna_clave'."""
+    hoja = _nombre_hoja(ruta, nombre)
+    if hoja is None:
+        raise ValueError(f"El Excel {ruta} no tiene la hoja '{nombre}' (ni 'R3_{nombre}'). "
+                         f"Sus hojas son: {pd.ExcelFile(ruta).sheet_names}")
+    crudo = pd.read_excel(ruta, sheet_name=hoja, header=None, nrows=20)
+    filas = crudo.index[crudo.apply(lambda r: r.astype(str).eq(columna_clave).any(), axis=1)]
+    if not len(filas):
+        raise ValueError(f"En la hoja '{hoja}' no se encontró la columna '{columna_clave}' en las primeras 20 filas")
+    return pd.read_excel(ruta, sheet_name=hoja, header=int(filas[0]))
+
+
 def usa_serie_r2(cfg) -> bool:
     """True si el Excel de R2 trae la hoja serie_horaria (versión final): ahí vienen,
     hora por hora, la medición del IDEAM, NASA y el modelo FUERA DE PLIEGUE para cada caso."""
     d = cfg["datos"]
-    return usa_excel_casos(cfg) and "serie_horaria" in pd.ExcelFile(d["casos_r2"]).sheet_names
+    return usa_excel_casos(cfg) and _nombre_hoja(d["casos_r2"], "serie_horaria") is not None
 
 
 def cargar_serie_r2(cfg) -> pd.DataFrame:
@@ -243,7 +287,7 @@ def cargar_serie_r2(cfg) -> pd.DataFrame:
     La predicción del modelo viene de un modelo que NO vio ese sitio (validación cruzada),
     por eso no se usa el .joblib aquí: el .joblib final sí vio estos sitios al entrenar."""
     d = cfg["datos"]
-    s = pd.read_excel(d["casos_r2"], sheet_name="serie_horaria")
+    s = _leer_hoja(d["casos_r2"], "serie_horaria", "Fecha_etiqueta_hora_local")
     m = cargar_mejora_r2(cfg).set_index("Sitio")
     col = d.get("columna_modelo_r2", "Modelo_principal")
     f = pd.to_datetime(s["Fecha_etiqueta_hora_local"])   # hora de cierre, igual que la tabla gold
@@ -262,10 +306,16 @@ def cargar_serie_r2(cfg) -> pd.DataFrame:
 def cargar_mejora_r2(cfg) -> pd.DataFrame:
     """La tabla completa de mejora por sitio (hoja mejora_por_sitio del Excel de
     evaluación: una fila por sitio que el modelo NO vio al entrenar)."""
-    ruta = cfg["datos"]["casos_r2"]
-    crudo = pd.read_excel(ruta, sheet_name="mejora_por_sitio", header=None)
-    fila = crudo.index[crudo.apply(lambda r: r.astype(str).str.fullmatch("Sitio").any(), axis=1)][0]
-    return pd.read_excel(ruta, sheet_name="mejora_por_sitio", header=fila)
+    m = _leer_hoja(cfg["datos"]["casos_r2"], "mejora_por_sitio", "Sitio")
+    # Las columnas de mejora son FÓRMULAS de Excel y openpyxl no guarda su valor: al leerlas con pandas
+    # salen vacías hasta que alguien abre y guarda el Excel. Se recalculan con los MAE, que sí son números
+    # (misma cuenta que evaluar_modelo.py: 1 - MAE_modelo / MAE_NASA).
+    for mejora, modelo, nasa in (("mejora_para_regla_D16", "MAE_mes_LGBM", "MAE_mes_NASA"),
+                                 ("mejora_mes_LGBM", "MAE_mes_LGBM", "MAE_mes_NASA"),
+                                 ("mejora_hora_LGBM", "MAE_hora_LGBM", "MAE_hora_NASA")):
+        if mejora in m.columns and modelo in m.columns and nasa in m.columns:
+            m[mejora] = m[mejora].fillna(1 - m[modelo] / m[nasa])
+    return m
 
 
 def cargar_casos_r2(cfg, df_gold: pd.DataFrame | None = None) -> pd.DataFrame:
