@@ -31,8 +31,13 @@ ANIO_REF = 2021  # año no bisiesto: 8,760 horas
 
 
 # ---------------------------------------------------------------- utilidades
-def cargar_config(ruta="config/config_r3.yaml") -> dict:
-    with open(ruta, encoding="utf-8") as f:
+RUTA_CONFIG_DEFECTO = Path(__file__).parent / "config" / "config_r3.yaml"
+
+
+def cargar_config(ruta=None) -> dict:
+    """Lee la ficha de supuestos. Sin ruta, usa la que viene con el paquete
+    (no depende de dónde se ejecute el programa)."""
+    with open(ruta or RUTA_CONFIG_DEFECTO, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
@@ -89,7 +94,11 @@ def variables_modelo(df: pd.DataFrame, columnas: list, desfase_min: float = 30) 
 def cargar_modelo(ruta: str):
     """Abre el modelo de R1. Acepta .joblib (LightGBM o XGBoost) o .json (XGBoost)."""
     if str(ruta).lower().endswith(".json"):
-        import xgboost as xgb
+        try:
+            import xgboost as xgb
+        except ImportError as e:
+            raise ImportError("Abrir un modelo XGBoost (.json) requiere instalar xgboost; "
+                              "el modelo final de R1 es LightGBM y no lo necesita.") from e
         m = xgb.XGBRegressor()
         m.load_model(ruta)
         return m
@@ -489,6 +498,20 @@ def simular(anio: pd.DataFrame, info: dict, fuente: str, cfg, estrato=None,
     return a | finanzas(a, cfg, kwp, costo_kwp, tasa) | {
         "kWh_por_kWp": a["kWh_produccion"] / kwp,
         "GHI_kWh_m2_anio": anio[FUENTES[fuente]].sum() / 1000}
+
+
+def flujo_desde_serie(fechas, ghi, t_aire, lat: float, lon: float, alt: float, cfg,
+                      estrato=None, kwp=None, costo_kwp=None, kwh_mes=None, f_tarifa=1.0,
+                      precio_exc2=None, tasa=None) -> dict:
+    """Entrada para la API: una serie horaria de radiación (Wh/m²) y temperatura (°C)
+    -> producción, consumo, balance, ahorro y finanzas. No descarga ni lee archivos."""
+    estrato = cfg["consumo"]["estrato"] if estrato is None else estrato
+    kwp = v(cfg["sistema"]["kWp"]) if kwp is None else kwp
+    prod = produccion_panel(ghi, t_aire, fechas, lat, lon, alt, cfg, kwp)
+    cons = consumo_hogar(fechas, cfg, kwh_mes)
+    h = balance(prod, cons, fechas)
+    a = ahorro_anual(h, cfg, estrato, alt, f_tarifa, precio_exc2)
+    return a | finanzas(a, cfg, kwp, costo_kwp, tasa)
 
 
 def cfg_con(cfg, inclinacion=None, azimut=None):

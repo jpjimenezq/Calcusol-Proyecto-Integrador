@@ -1,0 +1,171 @@
+{
+  "Comment": "Pipeline Calcusol: preparar estaciones, ingesta NASA, silver, gold y validacion",
+  "StartAt": "PrepararEstaciones",
+  "States": {
+    "PrepararEstaciones": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "calcusol-preparar-coordenada",
+        "Payload.$": "$"
+      },
+      "ResultSelector": {
+        "estaciones.$": "$.Payload.estaciones",
+        "anios.$": "$.Payload.anios"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "Notificar"
+        }
+      ],
+      "Next": "IngestaNasa"
+    },
+    "IngestaNasa": {
+      "Type": "Map",
+      "ItemsPath": "$.estaciones",
+      "MaxConcurrency": 2,
+      "ItemSelector": {
+        "codigo.$": "$$.Map.Item.Value.codigo",
+        "latitud.$": "$$.Map.Item.Value.latitud",
+        "longitud.$": "$$.Map.Item.Value.longitud",
+        "anios.$": "$.anios"
+      },
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "INLINE"
+        },
+        "StartAt": "DescargarNasa",
+        "States": {
+          "DescargarNasa": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "calcusol-ingesta-nasa",
+              "Payload.$": "$"
+            },
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "States.ALL"
+                ],
+                "IntervalSeconds": 30,
+                "MaxAttempts": 2,
+                "BackoffRate": 2
+              }
+            ],
+            "End": true
+          }
+        }
+      },
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "Notificar"
+        }
+      ],
+      "Next": "Silver"
+    },
+    "Silver": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "calcusol-silver"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "IntervalSeconds": 60,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "Notificar"
+        }
+      ],
+      "Next": "Gold"
+    },
+    "Gold": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "calcusol-gold"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "IntervalSeconds": 60,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "Notificar"
+        }
+      ],
+      "Next": "Validacion"
+    },
+    "Validacion": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "calcusol-validacion"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "IntervalSeconds": 60,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "Notificar"
+        }
+      ],
+      "End": true
+    },
+    "Notificar": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:607581913067:calcusol-alertas",
+        "Message": "Fallo el pipeline Calcusol. Revisa la ejecucion en Step Functions."
+      },
+      "End": true
+    }
+  }
+}
