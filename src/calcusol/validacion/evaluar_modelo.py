@@ -1,6 +1,7 @@
 """
 EVALUACIÓN DEL LIGHTGBM NUEVO (R2) + ENTREGA PARA R3 — UN SOLO ARCHIVO
-Uso: deja este archivo junto a la carpeta 'datos' (con dataset_modelo.parquet y modelo_lgbm.joblib) y pulsa ▶ en VS Code.
+Uso: desde la raíz del proyecto, `python src/calcusol/validacion/evaluar_modelo.py` (o ▶ en VS Code).
+Lee data/gold/dataset_modelo.parquet y models/radiacion/v1/modelo_lgbm.txt (ver calcusol/rutas.py); no necesita .joblib.
 Con MODO_PRUEBA = True corre en pocos minutos con datos y árboles reducidos (los números NO sirven, solo prueba que todo funciona).
 """
 import sys
@@ -41,12 +42,25 @@ try:
     CARPETA = Path(__file__).resolve().parent
 except NameError:
     CARPETA = Path.cwd()
-RUTA_PARQUET = CARPETA / "datos" / "dataset_modelo.parquet"
-RUTA_MODELO_NUEVO = CARPETA / "datos" / "modelo_lgbm.joblib"
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] if "__file__" in globals() else Path.cwd() / "src"))
+from calcusol.ml import features as feat, splits          # mismas variables y partición que el entrenamiento
+from calcusol.ml.modelo import cargar_regresor           # el .txt nativo se abre como LGBMRegressor, sin .joblib
+from calcusol.rutas import MODELO_TXT, PARQUET_MODELO
+
+RUTA_PARQUET = PARQUET_MODELO                            # data/gold/dataset_modelo.parquet (calcusol.gold.consolidar)
+RUTA_MODELO_NUEVO = MODELO_TXT                           # models/radiacion/v1/modelo_lgbm.txt (o MODELO_RUTA)
 RUTA_SALIDA = CARPETA / "resultados" / "evaluacion_lightgbm.xlsx"
-REMUESTREOS = 2000          # remuestreos de los intervalos de confianza
+def _opcion(nombre, defecto):
+    """Permite cambiar una opción sin editar el archivo: variable de entorno EVALUAR_<NOMBRE> (la usa el notebook)."""
+    v = os.environ.get("EVALUAR_" + nombre)
+    if v is None:
+        return defecto
+    return v.strip().lower() in ("1", "true", "si", "sí") if isinstance(defecto, bool) else type(defecto)(v)
+
+
+REMUESTREOS = _opcion("REMUESTREOS", 2000)          # remuestreos de los intervalos de confianza
 SEMILLA = 42
-MODO_PRUEBA = False         # True = prueba rápida de que todo funciona (números sin valor)
+MODO_PRUEBA = _opcion("MODO_PRUEBA", False)         # True = prueba rápida de que todo funciona (números sin valor)
 
 # --- Entrega a R3 ---
 MODELO_R3 = "LGBM"          # modelo que se entrega a R3: "LGBM" (con ubicación) o "LGBM_sin_ub" (sin latitud/longitud/altitud)
@@ -57,17 +71,19 @@ MIN_FILAS_ANIO = 3500       # ...y al menos estas en su mejor año (un año casi
 ANIOS_POR_CASO = 1          # años de serie horaria que se entregan por caso (los de más datos)
 
 # --- Validación cruzada de R2 ---
-CV_K = 5                    # pliegues
-CV_CON_SIN_UBICACION = True # también evalúa el LightGBM sin latitud/longitud/altitud
-CV_ESQUEMA_CELDA = True     # repite la validación agrupando por celda NASA (D10)
-CV_CURVA = True             # curva de aprendizaje (10, 25, 50 y 100 % de los sitios)
+CV_K = _opcion("CV_K", 5)                    # pliegues
+CV_CON_SIN_UBICACION = _opcion("CV_CON_SIN_UBICACION", True) # también evalúa el LightGBM sin latitud/longitud/altitud
+CV_ESQUEMA_CELDA = _opcion("CV_ESQUEMA_CELDA", True)     # repite la validación agrupando por celda NASA (D10)
+CV_CURVA = _opcion("CV_CURVA", True)             # curva de aprendizaje (10, 25, 50 y 100 % de los sitios)
 ANIO_CORTE = 2020           # se entrena con años <= ANIO_CORTE; "futuro" = años posteriores (igual que el notebook v2)
 FRACCIONES = (0.10, 0.25, 0.50)
-HACER_AB_PRELIMINARES = True  # prueba de robustez: ¿los datos preliminares empeoran el modelo?
+HACER_AB_PRELIMINARES = _opcion("HACER_AB_PRELIMINARES", True)  # prueba de robustez: ¿los datos preliminares empeoran el modelo?
 
 for ruta, nombre in ((RUTA_PARQUET, "la tabla de datos"), (RUTA_MODELO_NUEVO, "el modelo nuevo")):
     if not ruta.exists():
-        sys.exit(f"\nNo encuentro {nombre}: {ruta}\nCopia el archivo '{ruta.name}' a la carpeta '{ruta.parent}' y vuelve a ejecutar.")
+        sys.exit(f"\nNo encuentro {nombre}: {ruta}\n"
+                 + ("Créala con: python -m calcusol.gold.consolidar --entrada data/gold/dataset --salida data/gold/dataset_modelo.parquet"
+                    if ruta == RUTA_PARQUET else "Debe estar en models/radiacion/v1/ (o indica otra ruta en MODELO_RUTA)."))
 if MODELO_R3 == "LGBM_sin_ub" and not CV_CON_SIN_UBICACION:
     sys.exit("MODELO_R3 = 'LGBM_sin_ub' requiere CV_CON_SIN_UBICACION = True.")
 (CARPETA / "resultados").mkdir(exist_ok=True)
@@ -210,19 +226,11 @@ if "Departamento" not in df.columns:
 if "NombreEstacion" not in df.columns:
     df["NombreEstacion"] = df["CodigoEstacion"].astype(str)
 crudo = df.copy()                                    # copia con preliminares (para el A/B y el embudo)
-df = df[~df["EsPreliminar"]].copy()                  # el modelo se entrena y evalúa solo con datos definitivos
-for c in ["Valor", "ALLSKY_SFC_SW_DWN"]:
-    df = df[(df[c] >= 0) & (df[c] <= 1500)]
-df["ts"] = pd.to_datetime(df["Fecha"])
-df["year"] = df["ts"].dt.year
-df = df.drop_duplicates(["CodigoEstacion", "ts"]).reset_index(drop=True)
-rng = np.random.default_rng(42)
-est = df.groupby("CodigoEstacion")["Altitud"].first().reset_index()
-est["alt_bin"] = pd.qcut(est["Altitud"], 4, labels=False, duplicates="drop")
-hold = []                                            # 20 % de las estaciones de cada cuartil de altitud
-for _, g in est.groupby("alt_bin"):
-    hold += list(rng.choice(g["CodigoEstacion"].values, size=max(1, round(len(g) * 0.2)), replace=False))
-is_hold, is_recent = df["CodigoEstacion"].isin(hold), df["year"] >= 2021
+# Mismas reglas y mismo reparto que el entrenamiento (calcusol.ml.splits): solo definitivos, rango físico,
+# sin duplicados, 20 % de estaciones apartadas por cuartil de altitud y años >= 2021 como examen temporal.
+df = splits.cargar_gold(str(C.RUTA_PARQUET)).reset_index(drop=True)
+hold = splits.estaciones_holdout(df)
+is_hold, is_recent = df["CodigoEstacion"].isin(hold), df["year"] >= splits.TEST_YEAR_FROM
 split = {"train": df[~is_hold & ~is_recent].copy(), "temporal": df[~is_hold & is_recent].copy(), "espacial": df[is_hold].copy()}
 assert (len(split["train"]), len(split["temporal"]), len(split["espacial"])) == (2250748, 151597, 828775), "la partición no coincide con el notebook"
 log("Partición idéntica a la del notebook v2: " + ", ".join(f"{k} {len(v):,}" for k, v in split.items()))
@@ -239,31 +247,11 @@ for v in split.values():
 
 
 # =====================================================================
-# 2. VARIABLES DEL MODELO NUEVO (geometría solar con pvlib; igual que el notebook v2)
+# 2. VARIABLES DEL MODELO NUEVO (las mismas 17 del entrenamiento: calcusol.ml.features)
 # =====================================================================
 def build_features(d):
-    d = d.copy()
-    t_mid = d["ts"] + pd.Timedelta(minutes=30)   # (igual que el notebook v2; ver nota en LEEME_R3 sobre la convención de hora)
-    idx = pd.DatetimeIndex(t_mid.dt.tz_localize("America/Bogota").dt.tz_convert("UTC"))
-    zen = np.empty(len(d)); azi = np.empty(len(d)); g0 = np.empty(len(d))
-    st = d["CodigoEstacion"].values; pos = np.arange(len(d))
-    for s in np.unique(st):
-        m = st == s
-        lat, lon, alt = d.loc[m, ["Latitud", "Longitud", "Altitud"]].iloc[0]
-        sp = solarposition.get_solarposition(idx[m], lat, lon, altitude=alt)
-        zen[pos[m]] = sp["apparent_zenith"].values
-        azi[pos[m]] = sp["azimuth"].values
-        g0[pos[m]] = irradiance.get_extra_radiation(idx[m]).values
-    d["zenit"], d["azimut"], d["g0_extra"] = zen, azi, g0
-    d = d[(d["zenit"] < 90) & (d["CLRSKY_SFC_SW_DWN"] > 0) & (d["ALLSKY_SFC_SW_DWN"] > 0)].copy()
-    d["g0_horiz"] = d["g0_extra"] * np.cos(np.radians(d["zenit"])).clip(0)
-    d["razon_cielo"] = (d["ALLSKY_SFC_SW_DWN"] / d["CLRSKY_SFC_SW_DWN"]).clip(0, 1.5)
-    d["kt_calc"] = (d["ALLSKY_SFC_SW_DWN"] / d["g0_horiz"].replace(0, np.nan)).clip(0, 1.5)
-    d["hora_sin"] = np.sin(2 * np.pi * d["Hora"] / 24)
-    d["hora_cos"] = np.cos(2 * np.pi * d["Hora"] / 24)
-    d["dia_sin"] = np.sin(2 * np.pi * d["DiaDelAnio"] / 365.25)
-    d["dia_cos"] = np.cos(2 * np.pi * d["DiaDelAnio"] / 365.25)
-    return d.dropna(subset=["kt_calc"])
+    """Una sola definición de las variables para entrenar, evaluar y servir (calcusol.ml.features)."""
+    return feat.build_features(d, con_target=False)
 
 
 ev = {}
@@ -275,7 +263,7 @@ assert (len(ev["temporal"]), len(ev["espacial"])) == (138808, 755769), "las fila
 # =====================================================================
 # 3. MODELOS Y PREDICCIONES EN LAS MISMAS FILAS DE EXAMEN
 # =====================================================================
-lgbm = joblib.load(args.modelo)                      # modelo nuevo: predice el RESIDUO (IDEAM - NASA); la predicción final es NASA + residuo, >= 0
+lgbm = cargar_regresor(args.modelo)                    # modelo nuevo: predice el RESIDUO (IDEAM - NASA); la predicción final es NASA + residuo, >= 0
 
 
 def lgbm_nuevo():
