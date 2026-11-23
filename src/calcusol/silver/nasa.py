@@ -1,144 +1,128 @@
 """
-Silver — NASA POWER estandarizado (PySpark).
+Silver — NASA POWER por estación y hora (reglas 8 a 10).
 
-Lee los JSON crudos de bronze/nasa/, los convierte a una tabla horaria estándar
-y aplica las decisiones cerradas (docs/contrato_datos.md):
+No descarga nada: lee los JSON que dejó R4 en bronze. Para cada estación de silver/ideam
+se buscan los archivos de sus coordenadas y de los años que cubre (como silver.py en pandas).
 
-  - Regla temporal D-TEMPORAL: el timestamp UTC de NASA se corrige a hora local
-    del IDEAM restando 4 h (UTC-5 por zona horaria, +1 h por la convención
-    inicio-de-intervalo de NASA frente a fin-de-intervalo del IDEAM). Validado:
-    el pico de radiación queda centrado en la hora 12 local.
-  - Faltantes: -999 -> NULL.
-  - Cada JSON se nombra por coordenadas; se mapea coordenada -> CodigoEstacion
-    reusando el catálogo cruzado con las estaciones de radiación (bronze.nasa).
+Entrada:
+    silver/ideam/                                  (salida de silver/ideam.py: estaciones y años)
+    bronze/nasa/<lat>_<lon>_<año>_UTC.json         respuestas crudas de la NASA
+Salida:
+    silver/nasa/Anio=<año>/*.parquet               CodigoEstacion, Fecha y las 4 variables
 
-Salida: data/silver/nasa/  (Parquet, columnas: CodigoEstacion, Fecha + 4 vars).
+REGLAS
+   8. La NASA viene en UTC -> hora de Colombia (UTC-5).
+   9. +1 hora: la NASA marca el INICIO del periodo y el IDEAM el FINAL.  (8 + 9 = -4 horas)
+  10. Los -999 (dato faltante) pasan a vacío.
+  Solo se usan los años de la NASA desde 2001 que cubren el periodo de cada estación.
 
-Diseño distribuido: la lista de archivos se paraleliza y cada ejecutor parsea
-su JSON a filas; no se traen todos los datos al driver.
-
-EJECUCIÓN (tras terminar la descarga Bronze NASA):
-  docker compose run --rm calcusol uv run python -m calcusol.silver.nasa
+EJECUCIÓN (desde la raíz del repositorio):
+  python -m calcusol.silver.nasa
 """
 
 from __future__ import annotations
-
-import json
-from datetime import datetime, timedelta
-from pathlib import Path
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
-from calcusol.bronze import nasa as bronze_nasa
+from calcusol.common import archivos
 from calcusol.common.spark import get_spark
-from calcusol.config import settings
+from calcusol.config import schema, settings
 
+SILVER_IDEAM = settings.silver_path("ideam")
 BRONZE_NASA = settings.bronze_path("nasa")
 SALIDA = settings.silver_path("nasa")
 
-VARIABLES = bronze_nasa.VARIABLES          # 4 variables NASA
-AJUSTE_HORAS = -4                          # UTC-5 + 1 (D-TEMPORAL)
-FALTANTE = -999.0
+VARIABLES = ["ALLSKY_SFC_SW_DWN", "CLRSKY_SFC_SW_DWN", "ALLSKY_KT", "T2M"]
+PRIMER_ANIO_NASA = 2001
+HORAS_COLOMBIA = -5
+AJUSTE_ETIQUETA = 1          # NASA marca el inicio del periodo, IDEAM el final
+SUFIJO = "_UTC"              # los JSON de R4 terminan en _UTC.json
+FALTANTE = -999
 
-# Esquema de salida del parseo de cada JSON (filas largas por hora).
-ESQUEMA = T.StructType([
-    T.StructField("CodigoEstacion", T.LongType()),
-    T.StructField("Fecha", T.TimestampType()),
-    *[T.StructField(v, T.FloatType()) for v in VARIABLES],
-])
-
-
-# ================================================================== Lógica pura
-def mapa_archivo_a_codigos() -> dict[str, list[int]]:
-    """
-    Construye {nombre_archivo_json -> [CodigoEstacion, ...]} a partir del cruce
-    coordenada<->estación de la ingesta Bronze.
-
-    OJO: varias estaciones casi colocalizadas (< ~11 m) comparten el mismo
-    nombre de archivo al redondear a 4 decimales, y por tanto el MISMO JSON de
-    NASA (coherente: NASA tiene resolución ~50 km, ver plan D10 y auditoría 1.6).
-    Por eso el valor es una LISTA de códigos: el JSON se asigna a todas las
-    estaciones de esa coordenada, no a una sola.
-    """
-    coords = bronze_nasa.leer_coordenadas()   # codigo(str) -> (lat, lon)
-    mapa: dict[str, list[int]] = {}
-    carpeta = Path(BRONZE_NASA)
-    nombres = {p.name for p in carpeta.glob("*_UTC.json")}
-    for codigo, (lat, lon) in coords.items():
-        for anio in range(bronze_nasa.PISO_NASA, bronze_nasa.ANIO_FIN_DEFECTO + 1):
-            nombre = bronze_nasa.nombre_archivo(lat, lon, anio)
-            if nombre in nombres:
-                mapa.setdefault(nombre, [])
-                if int(codigo) not in mapa[nombre]:
-                    mapa[nombre].append(int(codigo))
-    return mapa
+ESQUEMA_JSON = T.StructType([T.StructField("properties", T.StructType([
+    T.StructField("parameter", T.MapType(T.StringType(), T.MapType(T.StringType(), T.DoubleType())))
+]))])
 
 
-def parsear_json(texto: str, codigos: list[int]) -> list[tuple]:
-    """
-    Convierte un JSON crudo de NASA en filas (codigo, fecha_local, *variables),
-    emitiendo las filas para CADA estación que comparte esa coordenada.
-    Aplica el ajuste temporal (-4 h) y -999 -> None. Lógica pura y testeable.
-    """
-    datos = json.loads(texto)
-    parametros = datos["properties"]["parameter"]
-    claves = parametros[VARIABLES[0]].keys()
-    filas = []
-    for clave in claves:
-        utc = datetime.strptime(clave, "%Y%m%d%H")
-        local = utc + timedelta(hours=AJUSTE_HORAS)
-        valores = []
-        for v in VARIABLES:
-            x = parametros[v].get(clave)
-            valores.append(None if x is None or x == FALTANTE else float(x))
-        for codigo in codigos:
-            filas.append((codigo, local, *valores))
-    return filas
+def nombre_json(lat: float, lon: float, anio: int) -> str:
+    """Nombre del JSON de la NASA, igual que lo guarda R4 (coordenadas a 4 decimales)."""
+    return f"{lat:.4f}_{lon:.4f}_{anio}{SUFIJO}.json"
 
 
-# ================================================================== Pipeline
-def transformar_nasa(spark: SparkSession) -> DataFrame:
-    mapa = mapa_archivo_a_codigos()
-    if not mapa:
-        raise SystemExit(f"No hay JSON de NASA en {BRONZE_NASA} para las estaciones.")
-    n_est = len({c for cods in mapa.values() for c in cods})
-    print(f"Archivos NASA: {len(mapa)} | estaciones mapeadas: {n_est}")
-
-    carpeta = Path(BRONZE_NASA)
-    items = [(str(carpeta / nombre), codigos) for nombre, codigos in mapa.items()]
-
-    # Distribuido: cada ejecutor lee y parsea su propio archivo.
-    def _parsear_item(item):
-        ruta, codigos = item
-        with open(ruta, encoding="utf-8") as f:
-            return parsear_json(f.read(), codigos)
-
-    rdd = spark.sparkContext.parallelize(items, numSlices=min(len(items), 64))
-    filas_rdd = rdd.flatMap(_parsear_item)
-    df = spark.createDataFrame(filas_rdd, schema=ESQUEMA)
-
-    # Una estación-hora única por si hubiera años solapados.
-    df = df.dropDuplicates(["CodigoEstacion", "Fecha"])
-    return df
+def estaciones(ideam: DataFrame) -> list[dict]:
+    """Estaciones con coordenadas, con el primer y último año de datos (tabla pequeña)."""
+    filas = ideam.groupBy("CodigoEstacion").agg(
+        F.first("Latitud").alias("Latitud"), F.first("Longitud").alias("Longitud"),
+        F.year(F.min("Fecha")).alias("ini"), F.year(F.max("Fecha")).alias("fin"),
+    ).collect()
+    return [r.asDict() for r in filas if r["Latitud"] is not None and r["Longitud"] is not None]
 
 
-def main() -> None:
-    spark = get_spark("Calcusol-Silver-NASA")
-    spark.sparkContext.setLogLevel("WARN")
+def transformar_nasa(spark: SparkSession, ideam: DataFrame) -> DataFrame | None:
+    """Devuelve CodigoEstacion, Fecha y las 4 variables de la NASA (reglas 8-10)."""
+    existentes = {archivos.nombre(a) for a in archivos.listar(BRONZE_NASA, ".json")}
+    cruce, rutas, faltan = [], [], []
+    for e in estaciones(ideam):
+        llave = f"{e['Latitud']:.4f}_{e['Longitud']:.4f}"
+        for anio in range(max(e["ini"], PRIMER_ANIO_NASA), e["fin"] + 1):
+            nombre = nombre_json(e["Latitud"], e["Longitud"], anio)
+            if nombre in existentes:
+                rutas.append(archivos.unir(BRONZE_NASA, nombre))
+                cruce.append((e["CodigoEstacion"], llave, anio))
+            else:
+                faltan.append((e["CodigoEstacion"], anio))
+    if faltan:
+        antes = sum(1 for _, a in faltan if a < schema.ANIO_MINIMO)
+        print(f"   ! Faltan {len(faltan)} archivos de la NASA (estación-año): {antes} son de antes de "
+              f"{schema.ANIO_MINIMO} (no afectan gold, D1) y {len(faltan) - antes} de {schema.ANIO_MINIMO} en adelante")
+        recientes = [f for f in faltan if f[1] >= schema.ANIO_MINIMO]
+        if recientes:
+            print(f"     Ejemplos desde {schema.ANIO_MINIMO}: {recientes[:10]}")
+    if not rutas:
+        return None
+
+    crudo = (spark.read.schema(ESQUEMA_JSON).option("multiLine", True).json(sorted(set(rutas)))
+             .withColumn("_archivo", F.input_file_name()))
+    patron = r"([-0-9.]+_[-0-9.]+)_(\d{4})(?:_UTC)?\.json$"
+    p = F.col("properties.parameter")
+    nasa = (crudo.select(F.regexp_extract("_archivo", patron, 1).alias("llave"),
+                         F.regexp_extract("_archivo", patron, 2).cast("int").alias("anio"),
+                         F.explode(p.getItem(VARIABLES[0])).alias("hora_utc", "_v0"),
+                         p.alias("_p"))
+            .select("llave", "anio",
+                    (F.to_timestamp("hora_utc", "yyyyMMddHH")                   # reglas 8 y 9
+                     + F.expr(f"INTERVAL {HORAS_COLOMBIA + AJUSTE_ETIQUETA} HOURS")).alias("Fecha"),
+                    *[F.element_at(F.col("_p").getItem(v), F.col("hora_utc")).alias(v) for v in VARIABLES]))
+    for v in VARIABLES:                                                         # regla 10
+        nasa = nasa.withColumn(v, F.when(F.col(v) == FALTANTE, None).otherwise(F.col(v)).cast("float"))
+
+    tabla = spark.createDataFrame(cruce, "CodigoEstacion long, llave string, anio int")
+    return (nasa.join(F.broadcast(tabla), ["llave", "anio"])
+            .select("CodigoEstacion", "Fecha", *VARIABLES)
+            .dropDuplicates(["CodigoEstacion", "Fecha"]))
+
+
+def main(spark: SparkSession | None = None) -> None:
+    propia = spark is None
+    spark = get_spark("Calcusol-Silver-NASA", existing=spark)
     try:
-        df = transformar_nasa(spark)
-        total = df.count()
-        estaciones = df.select("CodigoEstacion").distinct().count()
-        print(f"Filas NASA: {total:,} | estaciones: {estaciones}")
-        print("Rango de fechas (local):")
-        df.select(F.min("Fecha"), F.max("Fecha")).show(truncate=False)
-
-        (df.write.mode("overwrite").parquet(SALIDA))
-        print(f"\nSilver NASA escrito en: {SALIDA}")
+        ideam = spark.read.parquet(SILVER_IDEAM)
+        nasa = transformar_nasa(spark, ideam)
+        if nasa is None:
+            raise SystemExit(f"No encontré archivos de la NASA en {BRONZE_NASA}")
+        (nasa.withColumn(schema.COLUMNA_PARTICION, F.year("Fecha"))
+             .repartition(schema.COLUMNA_PARTICION)
+             .sortWithinPartitions("CodigoEstacion", "Fecha")
+             .write.mode("overwrite").partitionBy(schema.COLUMNA_PARTICION).parquet(SALIDA))
+        escrito = spark.read.parquet(SALIDA)
+        r = escrito.agg(F.count(F.lit(1)).alias("filas"),
+                        F.countDistinct("CodigoEstacion").alias("estaciones")).first()
+        print(f"\nSilver NASA: {r['filas']:,} filas | {r['estaciones']} estaciones | Guardado: {SALIDA}")
     finally:
-        spark.stop()
+        if propia:
+            spark.stop()
 
 
 if __name__ == "__main__":

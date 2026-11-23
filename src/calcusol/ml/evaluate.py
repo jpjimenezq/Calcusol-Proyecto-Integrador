@@ -1,14 +1,19 @@
 """
-ML — Evaluación del modelo en los dos tests (R1 / R2).
+ML — Evaluación del modelo en los tres exámenes de R2-1.
 
 Evalúa el modelo entrenado sobre:
-  - test_temporal: estaciones vistas, años >= 2021 (referencia; inflado porque
+  - test_temporal: estaciones de train, años >= 2021 (referencia; inflado porque
     el modelo conoce esas estaciones — se declara como tal).
-  - test_spatial:  estaciones nunca vistas (la CIFRA DEFENDIBLE).
+  - test_spatial:  estaciones nunca vistas (holdout por estación).
+  - test_spatiotemporal: SITIOS nunca vistos EN años futuros (el caso más
+    exigente de R2-1: lugar nuevo y tiempo nuevo).
 
 Reporta MAE/RMSE/R²/sesgo y mejora sobre NASA cruda en tres niveles de
-agregación (hora/día/mes) y por cuartil de altitud. La métrica de negocio es el
-MAE mensual (el Payback depende de la energía acumulada).
+agregación (hora/día/mes). La métrica de negocio es el MAE mensual (el Payback
+depende de la energía acumulada).
+
+El desglose fino del error (mapa de errores R2-3, tabla por sitio, "dónde no
+supera a NASA" R2-4) está en ml/validacion.py.
 
 EJECUCIÓN (tras entrenar):
   docker compose run --rm calcusol uv run python -m calcusol.ml.evaluate
@@ -64,6 +69,23 @@ def evaluar() -> dict:
             print(f"{niv:<6}{mb['MAE']:>9.1f}{mm['MAE']:>9.1f}"
                   f"{100*(1-mm['MAE']/mb['MAE']):>7.1f}%"
                   f"{mb['sesgo_%']:>8.1f}%{mm['sesgo_%']:>8.1f}%")
+
+    # R2-1: examen espacio-temporal (sitios nuevos EN años futuros).
+    st = splits.split_espacio_temporal()
+    d = feat.build_features(st["test_spatiotemporal"])
+    pred = np.clip(d["ALLSKY_SFC_SW_DWN"].to_numpy()
+                   + corrector.booster.predict(feat.matriz_X(d)), 0, None)
+    base = d["ALLSKY_SFC_SW_DWN"].to_numpy()
+    resultados["test_spatiotemporal"] = {
+        "modelo": _niveles(d, pred), "baseline": _niveles(d, base)}
+    print(f"\n{'='*58}\nTEST_SPATIOTEMPORAL (sitios nuevos, años >=2021)\n{'='*58}")
+    print(f"{'nivel':<6}{'MAE_B0':>9}{'MAE_mod':>9}{'mejora':>8}{'sesgoB0':>9}{'sesgoMod':>9}")
+    for niv in ["hora", "dia", "mes"]:
+        mb = resultados["test_spatiotemporal"]["baseline"][niv]
+        mm = resultados["test_spatiotemporal"]["modelo"][niv]
+        print(f"{niv:<6}{mb['MAE']:>9.1f}{mm['MAE']:>9.1f}"
+              f"{100*(1-mm['MAE']/mb['MAE']):>7.1f}%"
+              f"{mb['sesgo_%']:>8.1f}%{mm['sesgo_%']:>8.1f}%")
     return resultados
 
 

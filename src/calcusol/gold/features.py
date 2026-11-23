@@ -1,20 +1,21 @@
 """
-Gold — Dataset supervisado final (PySpark).
+Gold — Dataset listo para el modelo (filtros G1-G3 y D1).
 
-Toma la tabla integrada (gold/integracion) y produce el dataset de 17 columnas
-listo para ML (docs/contrato_datos.md, schema.py). Porta las reglas Gold del
-código de referencia:
+Entrada:
+    gold/integrado/          (gold/integracion.py: las 17 columnas, con noches y vacíos)
+Salida:
+    gold/dataset/Anio=<año>/*.parquet     gold v1, partido por año (D17)
+    gold/reportes/embudo_gold/            filas que pierde cada regla, por departamento (D9)
 
+REGLAS (en el orden de gold.py; D1 va al final)
   G1. Solo horas de sol: CLRSKY_SFC_SW_DWN > 0.
-  G2. Sin vacíos en las predictoras NASA/lugar ni en el objetivo.
-  G3. Sin valores negativos del objetivo (ruido de sensor al amanecer/atardecer).
-  +   Variables de tiempo: Hora, Mes, DiaDelAnio.
-  +   Embudo de filas y validación del contrato de 17 columnas.
+  G2. Sin vacíos en Valor, variables de la NASA ni ubicación.
+  G3. Sin valores negativos del IDEAM.
+  D1. Solo años 2005 a 2022.
+  Al final se revisa todo el contrato (config/schema.py: validar_gold).
 
-Salida: data/gold/dataset/  (Parquet, particionado por año de Fecha).
-
-EJECUCIÓN (tras gold/integracion):
-  docker compose run --rm calcusol uv run python -m calcusol.gold.features
+EJECUCIÓN (desde la raíz del repositorio):
+  python -m calcusol.gold.features
 """
 
 from __future__ import annotations
@@ -22,86 +23,65 @@ from __future__ import annotations
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
+from calcusol.common import archivos, embudo
 from calcusol.common.spark import get_spark
 from calcusol.config import schema, settings
 
 ENTRADA = settings.gold_path("integrado")
 SALIDA = settings.gold_path("dataset")
+REPORTES = settings.gold_path("reportes")
 
 X_NASA = schema.X_NASA
 X_LUGAR = schema.X_LUGAR
+ULTIMO_ANIO_ENTRENAMIENTO = 2019        # D0: entrenar hasta 2019, probar 2020-2022
+REGLAS = ["G1_noche", "G2_vacios", "G3_negativos", "D1_antes_2005"]
 
 
-def agregar_tiempo(df: DataFrame) -> DataFrame:
-    return (
-        df.withColumn("Hora", F.hour("Fecha"))
-        .withColumn("Mes", F.month("Fecha"))
-        .withColumn("DiaDelAnio", F.dayofyear("Fecha"))
-    )
+def marcar(df: DataFrame) -> DataFrame:
+    """Cada fila queda marcada con la PRIMERA regla que no cumple (o "ok")."""
+    g1 = F.coalesce(F.col("CLRSKY_SFC_SW_DWN") > 0, F.lit(False))
+    g2 = F.lit(True)
+    for c in [schema.OBJETIVO] + X_NASA + X_LUGAR:
+        g2 = g2 & F.col(c).isNotNull()
+    g3 = F.col(schema.OBJETIVO) >= 0
+    d1 = F.year("Fecha").between(schema.ANIO_MINIMO, schema.ANIO_MAXIMO)
+    motivo = (F.when(~g1, "G1_noche").when(~g2, "G2_vacios")
+              .when(~g3, "G3_negativos").when(~d1, "D1_antes_2005").otherwise("ok"))
+    return df.withColumn("_motivo", motivo)
 
 
-def construir(spark: SparkSession, con_embudo: bool = True) -> DataFrame:
-    df = spark.read.parquet(ENTRADA)
-
-    embudo = []
-
-    def paso(nombre: str, d: DataFrame) -> DataFrame:
-        if con_embudo:
-            n = d.count()
-            embudo.append((nombre, n))
-            print(f"  embudo · {nombre}: {n:,}")
-        return d
-
-    df = paso("0_integrado", df)
-
-    # G1: solo horas de sol (según NASA el sol está sobre el horizonte)
-    df = df.filter(F.col("CLRSKY_SFC_SW_DWN") > 0)
-    df = paso("1_horas_de_sol", df)
-
-    # G2: sin vacíos en X (NASA + lugar) ni en Y
-    requeridas = X_NASA + X_LUGAR + ["Valor"]
-    cond = None
-    for c in requeridas:
-        term = F.col(c).isNotNull()
-        cond = term if cond is None else (cond & term)
-    df = df.filter(cond)
-    df = paso("2_sin_vacios", df)
-
-    # G3: sin negativos en el objetivo
-    df = df.filter(F.col("Valor") >= 0)
-    df = paso("3_sin_negativos", df)
-
-    df = agregar_tiempo(df)
-
-    # Proyecta exactamente las 17 columnas del contrato
-    df = df.select(*schema.COLUMNAS_GOLD)
-    schema.validar_gold(df)
-
-    if con_embudo:
-        est = df.select("CodigoEstacion").distinct().count()
-        sitios = df.select("Sitio").distinct().count()
-        print(f"  estaciones: {est} | sitios: {sitios}")
-
-    return df
+def construir(spark: SparkSession) -> tuple[DataFrame, list[dict]]:
+    """Aplica G1-G3 y D1 y valida el contrato. Devuelve (gold, conteos por departamento)."""
+    marcado = marcar(spark.read.parquet(ENTRADA))
+    conteo = (marcado.groupBy("Departamento").pivot("_motivo", REGLAS + ["ok"]).count()
+              .fillna(0).collect())
+    filas = []
+    for r in conteo:
+        fila = {"Departamento": r["Departamento"], **{k: int(r[k]) for k in REGLAS}, "final": int(r["ok"])}
+        fila["entrada"] = sum(fila[k] for k in REGLAS) + fila["final"]
+        filas.append(fila)
+    gold = marcado.filter(F.col("_motivo") == "ok").drop("_motivo")
+    gold = schema.validar_gold(gold.withColumn(schema.COLUMNA_PARTICION, F.year("Fecha")), "gold v1")
+    return gold, filas
 
 
-def main() -> None:
-    spark = get_spark("Calcusol-Gold-Features")
-    spark.sparkContext.setLogLevel("WARN")
+def main(spark: SparkSession | None = None) -> None:
+    propia = spark is None
+    spark = get_spark("Calcusol-Gold-Features", existing=spark)
     try:
-        df = construir(spark)
-        # Partición por año (plan D17) acelera el filtrado train/test. Se llama
-        # 'anio' SIN guión bajo: pyarrow ignora las carpetas que empiezan con '_',
-        # y así pandas (ML) también lee las particiones. Al leer, 'anio' aparece
-        # como columna extra; ml/ y splits/ la usan o la ignoran, y la validación
-        # del contrato se hizo antes de particionar.
-        df = df.withColumn("anio", F.year("Fecha"))
-        (df.write.mode("overwrite")
-           .partitionBy("anio")
-           .parquet(SALIDA))
-        print(f"\nGold dataset escrito en: {SALIDA}")
+        gold, filas = construir(spark)
+        (gold.repartition(schema.COLUMNA_PARTICION)
+             .sortWithinPartitions("Departamento", "CodigoEstacion", "Fecha")
+             .write.mode("overwrite").partitionBy(schema.COLUMNA_PARTICION).parquet(SALIDA))
+        embudo.guardar_e_imprimir(
+            spark, filas,
+            [("entrada", "Integrado"), ("G1_noche", "G1 noche"), ("G2_vacios", "G2 vacíos"),
+             ("G3_negativos", "G3 neg."), ("D1_antes_2005", "D1 <2005"), ("final", "Gold")],
+            archivos.unir(REPORTES, "embudo_gold"), "Embudo gold (D9)")
+        print(f"\nGuardado: {SALIDA}")
     finally:
-        spark.stop()
+        if propia:
+            spark.stop()
 
 
 if __name__ == "__main__":
